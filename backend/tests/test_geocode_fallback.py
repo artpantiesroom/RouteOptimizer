@@ -392,13 +392,15 @@ async def test_partial_picks_the_most_important_representative():
 
 @pytest.mark.asyncio
 async def test_ambiguous_only_when_several_house_level_candidates():
+    """Two candidates both equal to the asked house is a genuine choice."""
     fake = RecordingGeocoder(
         {
             "Хрещатик, 1, Київ": GeocodeResult(
                 status=GeocodeStatus.AMBIGUOUS,
                 candidates=[
-                    candidate("house 1", house="1"),
-                    candidate("house 2", house="2"),
+                    candidate("house 1 side wing", house="1", road="Хрещатик", lat=50.44),
+                    candidate("house 1 rear", house="1", road="Провулок Хрещатицький", lat=50.45),
+                    candidate("house 2", house="2", road="Хрещатик"),
                     candidate("street", house=None, road="Хрещатик"),
                 ],
             )
@@ -409,6 +411,26 @@ async def test_ambiguous_only_when_several_house_level_candidates():
     assert results[0].status == "ambiguous"
     assert len(results[0].candidates or []) == 2
     assert all(c["address"].get("house_number") for c in results[0].candidates)
+
+
+@pytest.mark.asyncio
+async def test_exact_house_match_wins_over_a_nearby_other_house():
+    """House 1 asked, house 1 found: that resolves even if house 2 also matched."""
+    fake = RecordingGeocoder(
+        {
+            "Хрещатик, 1, Київ": GeocodeResult(
+                status=GeocodeStatus.AMBIGUOUS,
+                candidates=[
+                    candidate("house 1", house="1", road="Хрещатик"),
+                    candidate("house 2", house="2", road="Хрещатик"),
+                ],
+            )
+        }
+    )
+    svc = GeocodeService(fake)
+    results = await svc.geocode_batch([item("Хрещатик, 1, Киев")], city=KYIV)
+    assert results[0].status == "resolved"
+    assert results[0].display_name == "house 1"
 
 
 @pytest.mark.asyncio
@@ -685,20 +707,43 @@ async def test_a_place_at_the_same_house_is_not_a_choice():
 
 
 @pytest.mark.asyncio
-async def test_different_houses_on_one_street_stay_ambiguous():
+async def test_exact_house_wins_when_a_different_house_also_matched():
+    """Asking for house 3 and finding it resolves, whatever else also matched."""
     fake = RecordingGeocoder(
         {
             "вулиця Лесі, 3, Київ": GeocodeResult(
                 status=GeocodeStatus.RESOLVED,
                 candidates=[
-                    candidate("3", house="3", road="Лесі Ukrainian"),
-                    candidate("5", house="5", road="Лесі Ukrainian"),
+                    candidate("3", house="3", road="Лесі"),
+                    candidate("5", house="5", road="Лесі"),
                 ],
             )
         }
     )
     svc = GeocodeService(fake)
     results = await svc.geocode_batch([item("вулиця Лесі, 3, Киев")], city=KYIV)
+    assert results[0].status == "resolved"
+    assert results[0].display_name == "3"
+    assert results[0].found_house == "3"
+    assert results[0].needs_check is False
+
+
+@pytest.mark.asyncio
+async def test_a_street_only_address_with_two_houses_stays_ambiguous():
+    """With no house number in the input there is nothing to prefer."""
+    fake = RecordingGeocoder(
+        {
+            "вулиця Лесі, Київ": GeocodeResult(
+                status=GeocodeStatus.RESOLVED,
+                candidates=[
+                    candidate("3", house="3", road="Лесі"),
+                    candidate("5", house="5", road="Лесі"),
+                ],
+            )
+        }
+    )
+    svc = GeocodeService(fake)
+    results = await svc.geocode_batch([item("вулиця Лесі, Киев")], city=KYIV)
     assert results[0].status == "ambiguous"
     assert len(results[0].candidates) == 2
 
@@ -754,3 +799,682 @@ async def test_structured_attempt_uses_the_chosen_city_when_the_address_has_none
     results = await svc.geocode_batch([item("вулиця Буряківська, 12")], city=KYIV)
     assert results[0].status == "resolved"
     assert fake.structured_calls == [("вулиця Буряківська, 12", KYIV)]
+
+
+# --- slice 1.6: precision of "resolved" -------------------------------------
+# Fixtures are invented addresses. The two wrong-town cases from the report are
+# modelled with invented street names but the real city names that were found.
+
+
+@pytest.mark.asyncio
+async def test_city_in_the_address_scopes_even_without_the_city_field():
+    """The Yahotyn case: "Київ" was in the line but never used as a scope."""
+    fake = RecordingGeocoder(
+        {
+            "вулиця Тестова, 86, Київ": GeocodeResult(
+                status=GeocodeStatus.RESOLVED,
+                candidates=[candidate("wrong town", house="86", city="Яготин")],
+            )
+        }
+    )
+    svc = GeocodeService(fake)
+    results = await svc.geocode_batch([item("вулиця Тестова, 86, Київ")], city=None)
+    assert results[0].status == "not_found"
+    assert results[0].dropped_candidates == 1
+    assert "outside Київ" in results[0].scope_message
+
+
+@pytest.mark.asyncio
+async def test_address_city_is_used_as_the_structured_scope():
+    fake = RecordingGeocoder({})
+    svc = GeocodeService(fake)
+    await svc.geocode_batch([item("вулиця Тестова, 86, Київ")], city=None)
+    assert fake.structured_calls == [("вулиця Тестова, 86", KYIV)]
+
+
+@pytest.mark.asyncio
+async def test_explicit_city_wins_over_the_city_in_the_address():
+    """If the user picked a city, that is the scope, not the text.
+
+    The free-text call still sends the line as written, so its Kyiv candidates
+    are dropped as out of scope; the structured call is scoped to Lviv and wins.
+    """
+    fake = RecordingGeocoder(
+        {
+            "вулиця Тестова, 5, Київ": GeocodeResult(
+                status=GeocodeStatus.RESOLVED,
+                candidates=[candidate("kyiv side", house="5", city="Київ")],
+            ),
+            "structured:вулиця Тестова, 5|Львів": GeocodeResult(
+                status=GeocodeStatus.RESOLVED,
+                candidates=[candidate("lviv side", house="5", city="Львів")],
+            ),
+        }
+    )
+    svc = GeocodeService(fake)
+    results = await svc.geocode_batch([item("вулиця Тестова, 5, Київ")], city="Львів")
+    assert results[0].status == "resolved"
+    assert results[0].found_city == "Львів"
+    assert ("вулиця Тестова, 5", "Львів") in fake.structured_calls
+
+
+@pytest.mark.asyncio
+async def test_house_130_slash_1_is_not_the_asked_house_1():
+    """Asked 1, provider answered 130/1: not the same house."""
+    fake = RecordingGeocoder(
+        {
+            "проспект Тестовий, 1, Київ": GeocodeResult(
+                status=GeocodeStatus.RESOLVED,
+                candidates=[candidate("130/1", house="130/1")],
+            )
+        }
+    )
+    svc = GeocodeService(fake)
+    results = await svc.geocode_batch([item("проспект Тестовий, 1, Київ")], city=KYIV)
+    assert results[0].status == "ambiguous"
+    assert results[0].house == "1"
+    assert results[0].found_house == "130/1"
+
+
+@pytest.mark.asyncio
+async def test_house_40_slash_5_is_not_the_asked_house_40():
+    """Asked 40, provider answered 40/5: not the same house."""
+    fake = RecordingGeocoder(
+        {
+            "вулиця Тестова, 40, Київ": GeocodeResult(
+                status=GeocodeStatus.RESOLVED,
+                candidates=[candidate("40/5", house="40/5")],
+            )
+        }
+    )
+    svc = GeocodeService(fake)
+    results = await svc.geocode_batch([item("вулиця Тестова, 40, Київ")], city=KYIV)
+    assert results[0].status == "ambiguous"
+    assert results[0].house == "40"
+    assert results[0].found_house == "40/5"
+
+
+@pytest.mark.asyncio
+async def test_mismatched_house_keeps_trying_the_structured_form():
+    """A house mismatch is not a final answer: another spelling may match."""
+    fake = RecordingGeocoder(
+        {
+            "вулиця Тестова, 40, Київ": GeocodeResult(
+                status=GeocodeStatus.RESOLVED,
+                candidates=[candidate("40/5", house="40/5")],
+            ),
+            "structured:вулиця Тестова, 40|Київ": GeocodeResult(
+                status=GeocodeStatus.RESOLVED,
+                candidates=[candidate("40", house="40")],
+            ),
+        }
+    )
+    svc = GeocodeService(fake)
+    results = await svc.geocode_batch([item("вулиця Тестова, 40, Київ")], city=KYIV)
+    assert results[0].status == "resolved"
+    assert results[0].found_house == "40"
+
+
+@pytest.mark.asyncio
+async def test_house_match_accepts_a_cyrillic_letter_spelling():
+    """Nominatim writes "6А", the user writes "6а". Same house."""
+    fake = RecordingGeocoder(
+        {
+            "вулиця Тестова, 6а, Київ": GeocodeResult(
+                status=GeocodeStatus.RESOLVED,
+                candidates=[candidate("6А", house="6А")],
+            )
+        }
+    )
+    svc = GeocodeService(fake)
+    results = await svc.geocode_batch([item("вулиця Тестова, 6а, Київ")], city=KYIV)
+    assert results[0].status == "resolved"
+    assert results[0].found_house == "6А"
+
+
+@pytest.mark.asyncio
+async def test_house_match_accepts_a_slash_range():
+    """A range house reaches the classifier as "51/53" and matches "51/53".
+
+    The pure function also treats "51-53" as equal (see test_address_normalizer),
+    but normalize() reads a dash as the house-unit separator ("15-9"), so a dash
+    range cannot survive into the pipeline.
+    """
+    fake = RecordingGeocoder(
+        {
+            "вулиця Тестова, 51/53, Київ": GeocodeResult(
+                status=GeocodeStatus.RESOLVED,
+                candidates=[candidate("51/53", house="51/53")],
+            )
+        }
+    )
+    svc = GeocodeService(fake)
+    results = await svc.geocode_batch([item("вулиця Тестова, 51/53, Київ")], city=KYIV)
+    assert results[0].status == "resolved"
+
+
+@pytest.mark.asyncio
+async def test_house_mismatch_without_an_exact_match_is_not_partial_resolved():
+    """Never quietly promote a wrong house to a confident answer."""
+    fake = RecordingGeocoder(
+        {
+            "вулиця Тестова, 12, Київ": GeocodeResult(
+                status=GeocodeStatus.RESOLVED,
+                candidates=[candidate("12А", house="12А")],
+            )
+        }
+    )
+    svc = GeocodeService(fake)
+    results = await svc.geocode_batch([item("вулиця Тестова, 12, Київ")], city=KYIV)
+    assert results[0].status != "resolved"
+    assert results[0].status == "ambiguous"
+    assert results[0].found_house == "12А"
+
+
+# --- list-level checks ------------------------------------------------------
+
+
+@pytest.mark.asyncio
+async def test_resolved_row_reports_the_city_it_was_found_in():
+    fake = RecordingGeocoder(
+        {
+            "вулиця Тестова, 5, Київ": GeocodeResult(
+                status=GeocodeStatus.RESOLVED,
+                candidates=[candidate("good", house="5", city=KYIV)],
+            )
+        }
+    )
+    svc = GeocodeService(fake)
+    results = await svc.geocode_batch([item("вулиця Тестова, 5, Київ")], city=KYIV)
+    assert results[0].found_city == KYIV
+    assert results[0].needs_check is False
+
+
+@pytest.mark.asyncio
+async def test_out_of_city_row_is_flagged_without_a_pointless_retry():
+    """A row resolved in another town needs a check, but a retry cannot help.
+
+    The street-only fallback already ran inside the active city and found no
+    such street, so offering "search again in Київ" would be a dead end.
+    """
+    rows = [f"вулиця Тестова, {n}, Київ" for n in range(1, 5)]
+    responses = {}
+    for n in range(1, 5):
+        responses[f"вулиця Тестова, {n}, Київ"] = GeocodeResult(
+            status=GeocodeStatus.RESOLVED,
+            candidates=[candidate(f"kyiv {n}", house=str(n), city=KYIV)],
+        )
+    odd = "вулиця Інша, 9, Київ"
+    responses[odd] = GeocodeResult(
+        status=GeocodeStatus.RESOLVED,
+        candidates=[candidate("odd town", house="9", city="Полтава")],
+    )
+    fake = RecordingGeocoder(responses)
+    svc = GeocodeService(fake)
+    results = await svc.geocode_batch([item(t) for t in rows + [odd]], city=KYIV)
+    flagged = [r for r in results if r.needs_check]
+    assert len(flagged) == 1
+    assert flagged[0].original == odd
+    assert "Полтава" in flagged[0].needs_check_reason
+    assert flagged[0].retry_city is None, "a retry in the same city cannot succeed"
+    assert "No such address found in Київ" in flagged[0].message
+    assert svc.city_suggestion is None, "an explicit city means no suggestion"
+
+
+@pytest.mark.asyncio
+async def test_dominant_city_is_inferred_when_no_city_was_given():
+    rows = [f"вулиця Тестова, {n}, Київ" for n in range(1, 6)]
+    responses = {}
+    for n in range(1, 6):
+        responses[f"вулиця Тестова, {n}, Київ"] = GeocodeResult(
+            status=GeocodeStatus.RESOLVED,
+            candidates=[candidate(f"kyiv {n}", house=str(n), city=KYIV)],
+        )
+    fake = RecordingGeocoder(responses)
+    svc = GeocodeService(fake)
+    await svc.geocode_batch([item(t) for t in rows], city=None)
+    suggestion = svc.city_suggestion
+    assert suggestion is not None
+    assert suggestion.city == KYIV
+    assert suggestion.resolved_count == 5
+    assert suggestion.share == 1.0
+
+
+@pytest.mark.asyncio
+async def test_no_city_suggestion_when_the_rows_disagree():
+    """One Poltava row in five is not a majority worth suggesting."""
+    rows = [f"вулиця Тестова, {n}, Київ" for n in range(1, 5)]
+    responses = {}
+    for n in range(1, 5):
+        responses[f"вулиця Тестова, {n}, Київ"] = GeocodeResult(
+            status=GeocodeStatus.RESOLVED,
+            candidates=[candidate(f"kyiv {n}", house=str(n), city=KYIV)],
+        )
+    odd = "вулиця Інша, 9"
+    responses[odd] = GeocodeResult(
+        status=GeocodeStatus.RESOLVED,
+        candidates=[candidate("odd town", house="9", city="Полтава")],
+    )
+    fake = RecordingGeocoder(responses)
+    svc = GeocodeService(fake)
+    await svc.geocode_batch([item(t) for t in rows + [odd]], city=None)
+    assert svc.city_suggestion is None
+
+
+@pytest.mark.asyncio
+async def test_outlier_row_is_flagged_by_distance():
+    """One row far from the cluster is flagged even in the right city."""
+    rows = ["вулиця Тестова, 1, Київ", "вулиця Тестова, 2, Київ", "вулиця Тестова, 3, Київ"]
+    near = [(50.4501, 30.5234), (50.4510, 30.5240), (50.4505, 30.5230)]
+    responses = {}
+    for text, (lat, lon) in zip(rows, near):
+        responses[text] = GeocodeResult(
+            status=GeocodeStatus.RESOLVED,
+            candidates=[
+                GeocodeCandidate(
+                    display_name=text, latitude=lat, longitude=lon,
+                    address={"house_number": text.split(", ")[1], "city": KYIV},
+                    importance=1.0,
+                )
+            ],
+        )
+    far = "вулиця Далека, 4, Київ"
+    responses[far] = GeocodeResult(
+        status=GeocodeStatus.RESOLVED,
+        candidates=[
+            GeocodeCandidate(
+                display_name=far, latitude=49.5887, longitude=34.5113,
+                address={"house_number": "4", "city": KYIV}, importance=1.0,
+            )
+        ],
+    )
+    fake = RecordingGeocoder(responses)
+    svc = GeocodeService(fake)
+    results = await svc.geocode_batch([item(t) for t in rows + [far]], city=KYIV)
+    flagged = [r for r in results if r.needs_check]
+    assert len(flagged) == 1
+    assert flagged[0].original == far
+    # The reason states how far off it is, so the user can judge it.
+    assert "about 301 km" in flagged[0].needs_check_reason
+    assert "limit 50 km" in flagged[0].needs_check_reason
+
+
+@pytest.mark.asyncio
+async def test_outlier_threshold_is_configurable_on_the_service():
+    rows = ["вулиця Тестова, 1, Київ", "вулиця Тестова, 2, Київ", "вулиця Тестова, 3, Київ"]
+    near = [(50.4501, 30.5234), (50.4510, 30.5240), (50.4505, 30.5230)]
+    responses = {}
+    for text, (lat, lon) in zip(rows, near):
+        responses[text] = GeocodeResult(
+            status=GeocodeStatus.RESOLVED,
+            candidates=[
+                GeocodeCandidate(
+                    display_name=text, latitude=lat, longitude=lon,
+                    address={"house_number": text.split(", ")[1], "city": KYIV},
+                    importance=1.0,
+                )
+            ],
+        )
+    # ~13 km from the cluster.
+    mid = "вулиця Середня, 4, Київ"
+    responses[mid] = GeocodeResult(
+        status=GeocodeStatus.RESOLVED,
+        candidates=[
+            GeocodeCandidate(
+                display_name=mid, latitude=50.55, longitude=30.62,
+                address={"house_number": "4", "city": KYIV}, importance=1.0,
+            )
+        ],
+    )
+    items = [item(t) for t in rows + [mid]]
+
+    strict = GeocodeService(RecordingGeocoder(responses), max_outlier_km=10.0)
+    assert any(r.needs_check for r in await strict.geocode_batch(items, city=KYIV))
+
+    relaxed = GeocodeService(RecordingGeocoder(responses), max_outlier_km=50.0)
+    assert not any(r.needs_check for r in await relaxed.geocode_batch(items, city=KYIV))
+
+
+# --- trace ------------------------------------------------------------------
+
+
+@pytest.mark.asyncio
+async def test_trace_records_every_fallback_attempt():
+    fake = RecordingGeocoder(
+        {
+            "вулиця Тестова, 40, Київ": GeocodeResult(
+                status=GeocodeStatus.RESOLVED,
+                candidates=[candidate("40/5", house="40/5")],
+            )
+        }
+    )
+    svc = GeocodeService(fake, trace=True)
+    await svc.geocode_batch([item("вулиця Тестова, 40, Київ")], city=KYIV)
+    steps = svc.trace_as_dicts()
+    assert [s["kind"] for s in steps] == ["text", "structured"]
+    assert steps[0]["query"] == "вулиця Тестова, 40, Київ"
+    assert steps[1]["request_city"] == KYIV
+    assert all(s["scope_city"] == KYIV for s in steps)
+
+
+@pytest.mark.asyncio
+async def test_trace_explains_a_house_rejection():
+    fake = RecordingGeocoder(
+        {
+            "вулиця Тестова, 1, Київ": GeocodeResult(
+                status=GeocodeStatus.RESOLVED,
+                candidates=[candidate("130/1", house="130/1")],
+            )
+        }
+    )
+    svc = GeocodeService(fake, trace=True)
+    await svc.geocode_batch([item("вулиця Тестова, 1, Київ")], city=KYIV)
+    first = svc.trace_as_dicts()[0]
+    assert first["asked_house"] == "1"
+    assert first["candidates"][0]["house_number"] == "130/1"
+    assert "house mismatch: requested 1, found 130/1" in first["notes"]
+
+
+@pytest.mark.asyncio
+async def test_trace_explains_an_out_of_scope_rejection():
+    """The Yahotyn case: the candidate is named in the trace as rejected."""
+    fake = RecordingGeocoder(
+        {
+            "вулиця Тестова, 86, Київ": GeocodeResult(
+                status=GeocodeStatus.RESOLVED,
+                candidates=[candidate("wrong town", house="86", city="Яготин")],
+            )
+        }
+    )
+    svc = GeocodeService(fake, trace=True)
+    await svc.geocode_batch([item("вулиця Тестова, 86, Київ")], city=None)
+    first = svc.trace_as_dicts()[0]
+    assert first["scope_city"] == KYIV, "the city in the address is the scope"
+    assert any("rejected" in note and "Яготин" in note for note in first["notes"])
+
+
+@pytest.mark.asyncio
+async def test_trace_marks_a_cached_row_instead_of_a_request():
+    fake = RecordingGeocoder(
+        {
+            "Хрещатик, 1, Київ": GeocodeResult(
+                status=GeocodeStatus.RESOLVED, candidates=[candidate("ok", house="1")]
+            )
+        }
+    )
+    svc = GeocodeService(fake, trace=True)
+    await svc.geocode_batch([item("Хрещатик, 1, Київ")], city=KYIV)
+    calls = len(fake.text_calls)
+    svc.reset()
+    await svc.geocode_batch([item("Хрещатик, 1, Київ")], city=KYIV)
+    steps = svc.trace_as_dicts()
+    assert len(fake.text_calls) == calls, "the second batch used the cache"
+    assert len(steps) == 1
+    assert steps[0]["kind"] == "cache"
+    assert steps[0]["from_cache"] is True
+
+
+@pytest.mark.asyncio
+async def test_trace_is_empty_unless_asked_for():
+    fake = RecordingGeocoder({})
+    svc = GeocodeService(fake)
+    await svc.geocode_batch([item("вулиця Тестова, 1, Київ")], city=KYIV)
+    assert svc.trace == []
+
+
+@pytest.mark.asyncio
+async def test_trace_starts_fresh_for_each_batch():
+    fake = RecordingGeocoder({})
+    svc = GeocodeService(fake, trace=True)
+    await svc.geocode_batch([item("вулиця Тестова, 1, Київ")], city=KYIV)
+    first = len(svc.trace)
+    assert first > 0
+    await svc.geocode_batch([item("вулиця Інша, 2, Київ")], city=KYIV)
+    assert all(step.original == "вулиця Інша, 2, Київ" for step in svc.trace)
+    assert len(svc.trace) <= first, "the trace covers one batch, not all of them"
+
+
+# --- per-attempt house validation -------------------------------------------
+
+
+@pytest.mark.asyncio
+async def test_a_dash_range_is_judged_as_the_range_the_first_attempt_sent():
+    """Attempt 1 sends "51-53" literally, so "51/53" is the answer it wanted.
+
+    The normalizer still parses "51-53" as house 51 + unit 53 and sends "51" as
+    a later fallback, but the number a candidate is judged against is the one
+    the attempt that found it actually asked for.
+    """
+    fake = RecordingGeocoder(
+        {
+            "вулиця Тестова, 51-53, Київ": GeocodeResult(
+                status=GeocodeStatus.RESOLVED,
+                candidates=[candidate("range", house="51/53")],
+            )
+        }
+    )
+    svc = GeocodeService(fake)
+    results = await svc.geocode_batch([item("вулиця Тестова, 51-53, Київ")], city=KYIV)
+    assert results[0].status == "resolved"
+    assert results[0].found_house == "51/53"
+    assert results[0].unit == "53", "the unit is still reported to the user"
+    assert results[0].unit_inferred is True
+
+
+@pytest.mark.asyncio
+async def test_a_literal_dash_form_matches_the_slash_the_provider_returns():
+    fake = RecordingGeocoder(
+        {
+            "вулиця Тестова, 15-9, Київ": GeocodeResult(
+                status=GeocodeStatus.RESOLVED,
+                candidates=[candidate("flat", house="15/9")],
+            )
+        }
+    )
+    svc = GeocodeService(fake)
+    results = await svc.geocode_batch([item("вулиця Тестова, 15-9, Київ")], city=KYIV)
+    assert results[0].status == "resolved"
+    assert results[0].found_house == "15/9"
+
+
+@pytest.mark.asyncio
+async def test_a_candidate_matching_only_the_second_attempt_does_not_satisfy_the_first():
+    """A candidate for "51" must not answer a first attempt that asked "51-53"."""
+    fake = RecordingGeocoder(
+        {
+            "вулиця Тестова, 51-53, Київ": GeocodeResult(
+                status=GeocodeStatus.RESOLVED,
+                candidates=[candidate("single", house="51")],
+            ),
+            "вулиця Тестова, 51, Київ": GeocodeResult(
+                status=GeocodeStatus.RESOLVED,
+                candidates=[candidate("single", house="51")],
+            ),
+        }
+    )
+    svc = GeocodeService(fake)
+    results = await svc.geocode_batch([item("вулиця Тестова, 51-53, Київ")], city=KYIV)
+    # The first attempt cannot claim "51", so it falls through to the second,
+    # which did ask for "51" and therefore may.
+    assert results[0].status == "resolved"
+    assert results[0].searched_as == "вулиця Тестова, 51, Київ"
+    assert fake.text_calls == ["вулиця Тестова, 51-53, Київ", "вулиця Тестова, 51, Київ"]
+
+
+@pytest.mark.asyncio
+async def test_each_attempt_is_traced_with_the_number_it_sent():
+    fake = RecordingGeocoder(
+        {
+            "вулиця Тестова, 51-53, Київ": GeocodeResult(
+                status=GeocodeStatus.RESOLVED,
+                candidates=[candidate("range", house="51/53")],
+            )
+        }
+    )
+    svc = GeocodeService(fake, trace=True)
+    await svc.geocode_batch([item("вулиця Тестова, 51-53, Київ")], city=KYIV)
+    asked = [step["asked_house"] for step in svc.trace_as_dicts()]
+    assert asked == ["51-53"]
+
+
+# --- a single mismatched candidate ------------------------------------------
+
+
+@pytest.mark.asyncio
+async def test_a_range_holding_the_requested_number_offers_one_candidate_to_confirm():
+    """Asked 30, OSM has 28-30: strict, but one tap to accept it."""
+    fake = RecordingGeocoder(
+        {
+            "вулиця Тестова, 30, Київ": GeocodeResult(
+                status=GeocodeStatus.RESOLVED,
+                candidates=[
+                    candidate("range", house="28-30"),
+                    candidate("lettered", house="30-А"),
+                ],
+            )
+        }
+    )
+    svc = GeocodeService(fake)
+    results = await svc.geocode_batch([item("вулиця Тестова, 30, Київ")], city=KYIV)
+    row = results[0]
+    assert row.status == "ambiguous"
+    assert row.house == "30"
+    assert row.found_house == "28-30"
+    assert row.message == "Found 28-30, you asked for 30."
+    assert len(row.candidates) == 1, "one wrong address is not a choice"
+
+
+@pytest.mark.asyncio
+async def test_a_mismatch_is_watched_over_the_rest_of_the_chain():
+    """The chain keeps going, and only reports the mismatch if nothing fits."""
+    fake = RecordingGeocoder(
+        {
+            "вулиця Тестова, 40, Київ": GeocodeResult(
+                status=GeocodeStatus.RESOLVED,
+                candidates=[candidate("other", house="40/5")],
+            ),
+            "structured:вулиця Тестова, 40|Київ": GeocodeResult(
+                status=GeocodeStatus.RESOLVED,
+                candidates=[candidate("other", house="40/5")],
+            ),
+        }
+    )
+    svc = GeocodeService(fake)
+    results = await svc.geocode_batch([item("вулиця Тестова, 40, Київ")], city=KYIV)
+    assert results[0].status == "ambiguous"
+    assert results[0].message == "Found 40/5, you asked for 40."
+
+
+# --- street-only last resort -------------------------------------------------
+
+
+@pytest.mark.asyncio
+async def test_a_street_that_exists_gives_an_approximate_pin_instead_of_a_dead_retry():
+    fake = RecordingGeocoder(
+        {
+            "вулиця Тестова, 86, Київ": GeocodeResult(
+                status=GeocodeStatus.RESOLVED,
+                candidates=[candidate("other town", house="86", city="Полтава")],
+            ),
+            "structured:вулиця Тестова, 86|Київ": GeocodeResult(
+                status=GeocodeStatus.RESOLVED,
+                candidates=[candidate("other town", house="86", city="Полтава")],
+            ),
+            "structured:вулиця Тестова|Київ": GeocodeResult(
+                status=GeocodeStatus.PARTIAL,
+                candidates=[candidate("the street", house=None)],
+            ),
+        }
+    )
+    svc = GeocodeService(fake)
+    results = await svc.geocode_batch([item("вулиця Тестова, 86, Київ")], city=KYIV)
+    row = results[0]
+    assert row.status == "partial"
+    assert row.coordinate is not None, "an approximate pin is still useful"
+    assert row.needs_check is True
+    assert "Street found, house not found" in row.message
+    assert "not the house 86" in row.message
+    assert row.retry_city is None, "retrying the same city cannot do better"
+    assert ("вулиця Тестова", KYIV) in fake.structured_calls
+
+
+@pytest.mark.asyncio
+async def test_a_street_absent_from_the_city_says_so_and_offers_no_retry():
+    fake = RecordingGeocoder(
+        {
+            "вулиця Тестова, 86, Київ": GeocodeResult(
+                status=GeocodeStatus.RESOLVED,
+                candidates=[candidate("other town", house="86", city="Полтава")],
+            ),
+            "structured:вулиця Тестова, 86|Київ": GeocodeResult(
+                status=GeocodeStatus.RESOLVED,
+                candidates=[candidate("other town", house="86", city="Полтава")],
+            ),
+        }
+    )
+    svc = GeocodeService(fake)
+    results = await svc.geocode_batch([item("вулиця Тестова, 86, Київ")], city=KYIV)
+    row = results[0]
+    assert row.status == "not_found"
+    assert row.message == "No such address found in Київ in the map data"
+    assert row.retry_city is None
+    assert row.needs_check is True
+    # The drop notice survives, so the user can see where the matches were.
+    assert row.dropped_candidates == 1
+    assert "Полтава" in row.needs_check_reason
+
+
+@pytest.mark.asyncio
+async def test_the_street_only_lookup_is_skipped_when_nothing_was_out_of_scope():
+    """A plain miss must not spend a request on a street-level lookup."""
+    fake = RecordingGeocoder({})
+    svc = GeocodeService(fake)
+    results = await svc.geocode_batch([item("вулиця Тестова, 86, Київ")], city=KYIV)
+    assert results[0].status == "not_found"
+    assert ("вулиця Тестова", KYIV) not in fake.structured_calls
+
+
+@pytest.mark.asyncio
+async def test_the_street_only_lookup_is_traced():
+    fake = RecordingGeocoder(
+        {
+            "вулиця Тестова, 86, Київ": GeocodeResult(
+                status=GeocodeStatus.RESOLVED,
+                candidates=[candidate("other town", house="86", city="Полтава")],
+            ),
+            "structured:вулиця Тестова|Київ": GeocodeResult(
+                status=GeocodeStatus.PARTIAL, candidates=[candidate("the street")]
+            ),
+        }
+    )
+    svc = GeocodeService(fake, trace=True)
+    await svc.geocode_batch([item("вулиця Тестова, 86, Київ")], city=KYIV)
+    last = svc.trace_as_dicts()[-1]
+    assert last["kind"] == "street-only"
+    assert last["structured_street"] == "вулиця Тестова"
+    assert last["asked_house"] is None
+
+
+@pytest.mark.asyncio
+async def test_a_later_in_scope_answer_is_not_replaced_by_the_street_only_check():
+    """An out-of-scope first attempt must not cost us a good in-scope answer."""
+    fake = RecordingGeocoder(
+        {
+            "вулиця Тестова, 9, Київ": GeocodeResult(
+                status=GeocodeStatus.RESOLVED,
+                candidates=[candidate("other town", house="9", city="Полтава")],
+            ),
+            "structured:вулиця Тестова, 9|Київ": GeocodeResult(
+                status=GeocodeStatus.RESOLVED,
+                candidates=[candidate("other town", house="9", city="Полтава")],
+            ),
+            "structured:вулиця Тестова|Київ": GeocodeResult(
+                status=GeocodeStatus.PARTIAL, candidates=[candidate("the street")]
+            ),
+        }
+    )
+    svc = GeocodeService(fake)
+    results = await svc.geocode_batch([item("вулиця Тестова, 9, Київ")], city=KYIV)
+    assert results[0].status == "partial"
+    # The pin kept is the one the city agreed with, not the street-only probe.
+    assert results[0].found_city == KYIV

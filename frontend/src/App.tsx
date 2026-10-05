@@ -3,8 +3,16 @@ import { AddressInput } from "./components/AddressInput";
 import { ResultsList } from "./components/ResultsList";
 
 export default function App() {
-  const { state, run, selectCandidate, confirmPartial, retryItem, editItem, setCity } =
-    useGeocode();
+  const {
+    state,
+    run,
+    selectCandidate,
+    confirmPartial,
+    retryItem,
+    editItem,
+    setCity,
+    retryFlaggedInCity,
+  } = useGeocode();
   return (
     <div style={{ maxWidth: "800px", margin: "0 auto", padding: "16px" }}>
       <h1>Route Planner</h1>
@@ -13,6 +21,10 @@ export default function App() {
         loading={state.loading}
         city={state.city}
         onCityChange={setCity}
+        citySuggestion={state.citySuggestion}
+        onAcceptSuggestion={() =>
+          state.citySuggestion ? setCity(state.citySuggestion) : undefined
+        }
       />
       {state.error && <div style={{ color: "red", marginTop: "8px" }}>{state.error}</div>}
       <ResultsList
@@ -23,6 +35,7 @@ export default function App() {
         onConfirmPartial={confirmPartial}
         onRetry={retryItem}
         onEdit={editItem}
+        onRetryFlaggedInCity={retryFlaggedInCity}
       />
     </div>
   );

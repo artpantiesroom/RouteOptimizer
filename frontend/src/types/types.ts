@@ -59,6 +59,20 @@ export interface GeocodeResultItem {
   rechecking?: boolean;
   /** Set when the address search service could not be reached for this row. */
   offline?: boolean;
+  /** The house number that was actually found, when it differs from the request. */
+  found_house?: string | null;
+  /** The city the chosen coordinate sits in. */
+  found_city?: string | null;
+  /**
+   * Set when the row is consistent on its own but suspicious in the context of
+   * the list: outside the active city, or far from every other stop. A row like
+   * this is not counted as resolved.
+   */
+  needs_check?: boolean;
+  /** Why the row needs a check, in plain language. */
+  needs_check_reason?: string | null;
+  /** City to re-run this row in, when one is known. */
+  retry_city?: string | null;
 }
 
 /** What a house unit refers to, as understood from the address text. */

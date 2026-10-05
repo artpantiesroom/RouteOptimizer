@@ -46,10 +46,25 @@ class GeocodeBatchResponseItem(BaseModel):
     unit_inferred: bool = False
     dropped_candidates: int = 0
     scope_message: str | None = None
+    # The house number the geocoder actually found, when it differs from the
+    # requested one. Drives the "found 40/5, you asked for 40" copy.
+    found_house: str | None = None
+    # City the chosen coordinate sits in, as reported by the geocoder.
+    found_city: str | None = None
+    # Set when the row is internally consistent but suspicious in the context of
+    # the list: outside the active city, or far from every other stop.
+    needs_check: bool = False
+    needs_check_reason: str | None = None
+    # City the user could re-run this row in, when one is known.
+    retry_city: str | None = None
 
 
 class GeocodeBatchResponse(BaseModel):
     results: list[GeocodeBatchResponseItem]
+    # Set only when the City field was left blank and the resolved rows agree
+    # on one city. A suggestion for the user to accept, never applied silently.
+    city_suggestion: str | None = None
+    city_suggestion_share: float | None = None
 
 
 @lru_cache(maxsize=1)
@@ -83,8 +98,12 @@ async def geocode_batch(
             BatchGeocodeRequestItem(index=i.index, original=i.original, trimmed=i.trimmed)
             for i in req.items
         ]
+        service.reset()
         results = await service.geocode_batch(items, city=city)
+        suggestion = service.city_suggestion
         return GeocodeBatchResponse(
+            city_suggestion=suggestion.city if suggestion else None,
+            city_suggestion_share=suggestion.share if suggestion else None,
             results=[
                 GeocodeBatchResponseItem(
                     index=r.index,
@@ -103,6 +122,11 @@ async def geocode_batch(
                     unit_inferred=r.unit_inferred,
                     dropped_candidates=r.dropped_candidates,
                     scope_message=r.scope_message,
+                    found_house=r.found_house,
+                    found_city=r.found_city,
+                    needs_check=r.needs_check,
+                    needs_check_reason=r.needs_check_reason,
+                    retry_city=r.retry_city,
                 )
                 for r in results
             ]

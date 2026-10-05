@@ -13,3 +13,4 @@ frontend/node_modules/
 backend/.env
 frontend/dist/
 frontend/.vite/
+backend/scripts/samples/

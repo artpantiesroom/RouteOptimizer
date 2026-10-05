@@ -147,9 +147,94 @@ _HOUSE_UNIT_RE = re.compile(r"(?<![\w/.-])(\d+)\s*[-–—]\s*(\d+[а-яa-z]?)(?
 _HOUSE_RE = re.compile(r"(?<![\w/.\-])(\d+[/\-]?\d*[а-яa-z]?)(?![\w/\-])", re.IGNORECASE)
 
 
+def house_in_text(text: str) -> Optional[str]:
+    """The house number a query spells, read back off the query itself.
+
+    The fallback chain sends different numbers in different attempts: attempt 1
+    sends the line as written ("51-53"), attempt 2 drops the unit ("51"). A
+    candidate has to be judged against the number *that attempt* asked for, so
+    the number is read from the outgoing query rather than from ``house``,
+    which only holds the parsed first half of a range.
+
+    Purely a reader: it applies no rule the parser does not already apply.
+    """
+    match = _HOUSE_RE.search(text)
+    return match.group(1) if match else None
+
+
 def _fold(text: str) -> str:
     """Casefold and normalize apostrophes/quotes for tolerant comparison."""
     return _APOSTROPHES.sub("'", text).casefold().strip()
+
+
+# Latin and Cyrillic look-alikes are mapped to one representative character so
+# "6A" and "6А" (Latin vs Cyrillic A) compare equal.
+_LOOK_ALIKES = {
+    "а": "а", "a": "а",
+    "б": "б", "b": "б",
+    "в": "в",
+    "г": "г", "r": "г",
+    "е": "е", "e": "е",
+    "є": "є", "ё": "є",
+    "з": "з", "3": "з",
+    "и": "и", "i": "и",
+    "ї": "ї",
+    "к": "к", "k": "к",
+    "м": "м", "m": "м",
+    "н": "н", "h": "н",
+    "о": "о", "o": "о",
+    "п": "п", "n": "п",
+    "р": "р", "p": "р",
+    "с": "с", "c": "с",
+    "т": "т", "t": "т",
+    "у": "у", "y": "у",
+    "х": "х", "x": "х",
+    "ц": "ц",
+    "ш": "ш", "w": "ш",
+    "щ": "щ",
+}
+_LOOK_ALIKE_TABLE = str.maketrans(_LOOK_ALIKES)
+
+# "/" (and any dash, by the time it gets here) right before a letter separates
+# a letter suffix from the digits: "6-А" == "6А". Between digits it is part of
+# the number and is kept: "1/2" != "12".
+_LETTER_AFTER_SEPARATOR = re.compile(r"/(?=[^\W\d_])")
+
+
+def house_numbers_equal(requested: Optional[str], found: Optional[str]) -> bool:
+    """Whether a found house number is the one the user asked for.
+
+    A match is required before a row can be called ``resolved``: answering
+    "130/1" for a request of "1", or "40/5" for "40", is a wrong address even
+    though the street is right.
+
+    Tolerant of the differences that mean the same thing to a reader:
+
+    * letter case, and Latin letters that look like Cyrillic ones;
+    * surrounding whitespace, dots and dashes used as decoration
+      ("6-А", "6 - А", "6. а");
+    * a dash used instead of a slash in a range ("51-53" == "51/53").
+
+    Strict about everything else, which is the point: "1" is not "130/1", and
+    "40" is not "40/5".
+    """
+    if requested is None or found is None:
+        return False
+
+    def canonical(value: str) -> str:
+        text = _fold(value).translate(_LOOK_ALIKE_TABLE)
+        text = text.replace(".", " ")
+        # Every dash and slash means one separator, so "51-53", "51–53" and
+        # "51/53" collapse together.
+        for dash in "-–—":
+            text = text.replace(dash, "/")
+        # Spaces around a separator are decoration: "6 - А".
+        text = text.replace(" ", "")
+        # A separator in front of a letter is decoration too: "6-А" == "6А".
+        text = _LETTER_AFTER_SEPARATOR.sub("", text)
+        return text.strip("/")
+
+    return canonical(requested) == canonical(found)
 
 
 def _clean(text: str) -> str:
@@ -197,6 +282,9 @@ class NormalizedAddress:
     query: str
     query_without_unit: str
     structured_street: Optional[str]
+    # The same street with the house number removed, for the last-resort
+    # street-only lookup used when every candidate was out of scope.
+    street_only: Optional[str]
     house: Optional[str]
     unit: Optional[str]
     unit_kind: Optional[str]
@@ -379,7 +467,11 @@ def normalize(raw: str) -> NormalizedAddress:
         rules.append("house_extracted")
 
     structured_street = _clean(street_text)
+    street_only: Optional[str] = None
     if structured_street and house:
+        # Kept before the house is appended, so the street can be looked up on
+        # its own when the house cannot be found anywhere in the right city.
+        street_only = structured_street
         structured_street = f"{structured_street}, {house}"
     if structured_street:
         # The structured query is sent to the geocoder as-is, so it must carry
@@ -401,6 +493,7 @@ def normalize(raw: str) -> NormalizedAddress:
         query=mapped or text,
         query_without_unit=mapped_without_unit or query_without_unit,
         structured_street=structured_street,
+        street_only=street_only,
         house=house,
         unit=unit,
         unit_kind=unit_kind,

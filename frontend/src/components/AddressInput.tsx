@@ -5,9 +5,19 @@ interface Props {
   loading: boolean;
   city: string;
   onCityChange: (city: string) => void;
+  /** City the resolved rows agreed on, when the field is still blank. */
+  citySuggestion?: string | null;
+  onAcceptSuggestion?: () => void;
 }
 
-export function AddressInput({ onRun, loading, city, onCityChange }: Props) {
+export function AddressInput({
+  onRun,
+  loading,
+  city,
+  onCityChange,
+  citySuggestion,
+  onAcceptSuggestion,
+}: Props) {
   const [text, setText] = useState("");
   return (
     <div>
@@ -21,6 +31,14 @@ export function AddressInput({ onRun, loading, city, onCityChange }: Props) {
         placeholder="Filled in from the first address; edit it if needed"
         style={{ width: "100%", fontSize: "16px", marginBottom: "12px" }}
       />
+      {citySuggestion && !city.trim() && onAcceptSuggestion && (
+        <div style={{ color: "#555", marginBottom: "12px" }}>
+          Most addresses resolved in {citySuggestion}.
+          <button onClick={onAcceptSuggestion} style={{ marginLeft: "8px" }}>
+            Use {citySuggestion}
+          </button>
+        </div>
+      )}
       <textarea
         value={text}
         onChange={(e) => setText(e.target.value)}

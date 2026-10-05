@@ -16,6 +16,9 @@ interface Props {
   onConfirmPartial: () => void;
   onRetry: () => void;
   onEdit: (newText: string) => void;
+  // Optional so a row can be rendered in isolation (tests, storybook) without
+  // the whole retry flow. The button is hidden when it is missing.
+  onRetryInCity?: (city: string) => void;
 }
 
 /** "Apartment 9", or a hedged reading when the unit was guessed from "15-9". */
@@ -36,6 +39,7 @@ export function ResultItem({
   onConfirmPartial,
   onRetry,
   onEdit,
+  onRetryInCity,
 }: Props) {
   const [editing, setEditing] = useState(false);
   const [draft, setDraft] = useState(item.trimmed);
@@ -151,21 +155,43 @@ export function ResultItem({
       )}
       {item.status === "ambiguous" && item.candidates && (
         <div style={{ color: "#0000cd" }}>
-          More than one match - pick one:
-          <ul style={{ margin: "4px 0" }}>
-            {item.candidates.map((c, i) => (
-              <li key={i}>
-                <button onClick={() => onSelectCandidate(i)} style={{ marginRight: "8px" }}>
-                  Choose
-                </button>
-                {c.display_name}
-              </li>
-            ))}
-          </ul>
+          {/* One wrong address is not a choice to make, it is one suggestion
+              to accept or leave, so it gets a single action. */}
+          {item.candidates.length === 1 ? (
+            <>
+              <div>{item.message || "One match found - accept it or check the address:"}</div>
+              <ul style={{ margin: "4px 0" }}>
+                {item.candidates.map((c, i) => (
+                  <li key={i}>
+                    <button onClick={() => onSelectCandidate(i)} style={{ marginRight: "8px" }}>
+                      Use this match
+                    </button>
+                    {c.display_name}
+                  </li>
+                ))}
+              </ul>
+            </>
+          ) : (
+            <>
+              <div>More than one match - pick one:</div>
+              <ul style={{ margin: "4px 0" }}>
+                {item.candidates.map((c, i) => (
+                  <li key={i}>
+                    <button onClick={() => onSelectCandidate(i)} style={{ marginRight: "8px" }}>
+                      Choose
+                    </button>
+                    {c.display_name}
+                  </li>
+                ))}
+              </ul>
+            </>
+          )}
         </div>
       )}
       {item.status === "not_found" && (
-        <div style={{ color: "red" }}>Not found - check spelling/address</div>
+        <div style={{ color: "red" }}>
+          {item.message || "Not found - check spelling/address"}
+        </div>
       )}
       {item.status === "error" && (
         <div style={{ color: "red" }}>
@@ -175,6 +201,26 @@ export function ResultItem({
               {item.retrying ? "Retrying..." : "Retry"}
             </button>
           )}
+        </div>
+      )}
+
+      {item.needs_check && (
+        <div style={{ color: "#b8860b" }}>
+          Needs a check{item.needs_check_reason ? `: ${item.needs_check_reason}` : "."}
+          {item.retry_city && !busy && onRetryInCity && (
+            <button
+              onClick={() => onRetryInCity(item.retry_city as string)}
+              style={{ marginLeft: "8px" }}
+            >
+              Search again in {item.retry_city}
+            </button>
+          )}
+        </div>
+      )}
+
+      {item.house && item.found_house && item.found_house !== item.house && (
+        <div style={{ color: "#b8860b" }}>
+          House {item.house} was asked for, the match is {item.found_house}.
         </div>
       )}
 

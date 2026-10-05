@@ -288,6 +288,63 @@ describe("ResultItem - candidate list", () => {
   });
 });
 
+describe("ResultItem - a single suggested match", () => {
+  const mismatch = makeItem({
+    status: "ambiguous",
+    message: "Found 28-30, you asked for 30.",
+    candidates: [{ display_name: "28-30, Вулиця Тестова, Київ", latitude: 1, longitude: 1 }],
+  });
+
+  it("shows what was found and what was asked", () => {
+    render(
+      <ResultItem
+        item={mismatch}
+        onSelectCandidate={noop}
+        onConfirmPartial={noop}
+        onRetry={noop}
+        onEdit={onEdit}
+      />
+    );
+    expect(screen.getByText("Found 28-30, you asked for 30.")).toBeInTheDocument();
+    expect(screen.queryByText(/More than one match/)).toBeNull();
+  });
+
+  it("accepts it in one tap", async () => {
+    const onSelectCandidate = vi.fn();
+    render(
+      <ResultItem
+        item={mismatch}
+        onSelectCandidate={onSelectCandidate}
+        onConfirmPartial={noop}
+        onRetry={noop}
+        onEdit={onEdit}
+      />
+    );
+    await userEvent.click(screen.getByRole("button", { name: "Use this match" }));
+    expect(onSelectCandidate).toHaveBeenCalledWith(0);
+  });
+});
+
+describe("ResultItem - a row we can explain", () => {
+  it("says which city had no such address", () => {
+    render(
+      <ResultItem
+        item={makeItem({
+          status: "not_found",
+          message: "No such address found in Київ in the map data",
+        })}
+        onSelectCandidate={noop}
+        onConfirmPartial={noop}
+        onRetry={noop}
+        onEdit={onEdit}
+      />
+    );
+    expect(
+      screen.getByText("No such address found in Київ in the map data")
+    ).toBeInTheDocument();
+  });
+});
+
 describe("ResultItem - editing in place", () => {
   it("opens an editor prefilled with the current text", async () => {
     render(
@@ -444,5 +501,91 @@ describe("ResultItem - error wording", () => {
       )
     ).toBeInTheDocument();
     expect(screen.getByText("Edited")).toBeInTheDocument();
+  });
+});
+describe("ResultItem - needs check", () => {
+  it("says which city the row was found in", () => {
+    render(
+      <ResultItem
+        item={makeItem({
+          status: "not_found",
+          needs_check: true,
+          needs_check_reason: "Found in Полтава, outside Київ.",
+          found_city: "Полтава",
+          retry_city: "Київ",
+        })}
+        onSelectCandidate={noop}
+        onConfirmPartial={noop}
+        onRetry={noop}
+        onEdit={onEdit}
+        onRetryInCity={noop}
+      />
+    );
+    expect(screen.getByText(/Needs a check/)).toHaveTextContent(
+      "Needs a check: Found in Полтава, outside Київ."
+    );
+  });
+
+  it("offers a one-tap retry in the city it should have been in", async () => {
+    const onRetryInCity = vi.fn();
+    render(
+      <ResultItem
+        item={makeItem({
+          status: "not_found",
+          needs_check: true,
+          needs_check_reason: "Found in Полтава, outside Київ.",
+          retry_city: "Київ",
+        })}
+        onSelectCandidate={noop}
+        onConfirmPartial={noop}
+        onRetry={noop}
+        onEdit={onEdit}
+        onRetryInCity={onRetryInCity}
+      />
+    );
+    await userEvent.click(screen.getByRole("button", { name: "Search again in Київ" }));
+    expect(onRetryInCity).toHaveBeenCalledWith("Київ");
+  });
+
+  it("hides the retry button while the row is busy", () => {
+    render(
+      <ResultItem
+        item={makeItem({ status: "not_found", needs_check: true, retry_city: "Київ", retrying: true })}
+        onSelectCandidate={noop}
+        onConfirmPartial={noop}
+        onRetry={noop}
+        onEdit={onEdit}
+        onRetryInCity={noop}
+      />
+    );
+    expect(screen.queryByRole("button", { name: /Search again in/ })).toBeNull();
+  });
+
+  it("shows the house that was asked for next to the one that was found", () => {
+    render(
+      <ResultItem
+        item={makeItem({ status: "ambiguous", house: "40", found_house: "40/5" })}
+        onSelectCandidate={noop}
+        onConfirmPartial={noop}
+        onRetry={noop}
+        onEdit={onEdit}
+      />
+    );
+    expect(
+      screen.getByText("House 40 was asked for, the match is 40/5.")
+    ).toBeInTheDocument();
+  });
+
+  it("does not mention a house when the match is the one asked for", () => {
+    render(
+      <ResultItem
+        item={makeItem({ status: "resolved", house: "40", found_house: "40" })}
+        onSelectCandidate={noop}
+        onConfirmPartial={noop}
+        onRetry={noop}
+        onEdit={onEdit}
+      />
+    );
+    expect(screen.queryByText(/was asked for/)).toBeNull();
   });
 });

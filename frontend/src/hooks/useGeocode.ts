@@ -22,6 +22,13 @@ export interface UseGeocodeState {
   error: string | null;
   /** Scope applied to every row. Prefilled from the first address. */
   city: string;
+  /**
+   * City suggested by the resolved rows when the City field was blank. Shown
+   * as a hint only: it is never applied unless the user accepts it.
+   */
+  citySuggestion: string | null;
+  /** Share of confident rows behind the suggestion, 0-1. */
+  citySuggestionShare: number | null;
 }
 
 /** Fold a backend result onto a row, clearing any previous answer. */
@@ -42,6 +49,11 @@ function mergeResult(item: GeocodeResultItem, r: GeocodeBatchResponseItem): Geoc
     unit_inferred: r.unit_inferred ?? false,
     dropped_candidates: r.dropped_candidates ?? 0,
     scope_message: r.scope_message ?? null,
+    found_house: r.found_house ?? null,
+    found_city: r.found_city ?? null,
+    needs_check: r.needs_check ?? false,
+    needs_check_reason: r.needs_check_reason ?? null,
+    retry_city: r.retry_city ?? null,
     selectedCandidateIndex: undefined,
     confirmed: undefined,
     offline: false,
@@ -56,6 +68,8 @@ export function useGeocode() {
     loading: false,
     error: null,
     city: "",
+    citySuggestion: null,
+    citySuggestionShare: null,
   });
   const abortControllerRef = useRef<AbortController | null>(null);
   const latestRunIdRef = useRef(0);
@@ -82,7 +96,16 @@ export function useGeocode() {
     const controller = new AbortController();
     abortControllerRef.current = controller;
 
-    setState((prev) => ({ ...prev, items: [], total: 0, processed: 0, loading: true, error: null }));
+    setState((prev) => ({
+      ...prev,
+      items: [],
+      total: 0,
+      processed: 0,
+      loading: true,
+      error: null,
+      citySuggestion: null,
+      citySuggestionShare: null,
+    }));
     try {
       const parsed = await parse(text);
       if (runId !== latestRunIdRef.current) {
@@ -133,6 +156,9 @@ export function useGeocode() {
           return;
         }
         processedCount += batch.length;
+        // The suggestion is only meaningful once a whole batch of confident
+        // rows agrees, so it replaces any earlier one rather than adding to it.
+        const suggestion = resp.city_suggestion ?? null;
         setState((prev) => {
           if (runId !== latestRunIdRef.current) {
             return prev;
@@ -146,7 +172,13 @@ export function useGeocode() {
             }
           }
           runBaseItemsRef.current.set(runId, next.map((n) => ({ ...n })));
-          return { ...prev, items: next, processed: processedCount };
+          return {
+            ...prev,
+            items: next,
+            processed: processedCount,
+            citySuggestion: suggestion,
+            citySuggestionShare: resp.city_suggestion_share ?? null,
+          };
         });
       }
       if (runId !== latestRunIdRef.current) {
@@ -318,5 +350,75 @@ export function useGeocode() {
     setState((prev) => ({ ...prev, city }));
   }
 
-  return { state, run, selectCandidate, confirmPartial, retryItem, editItem, setCity };
+  /**
+   * Re-run only the rows that need a check, in the city they should be in.
+   * Other rows keep their answers: they were not implicated.
+   */
+  async function retryFlaggedInCity(targetCity: string) {
+    const city = targetCity.trim();
+    if (!city) return;
+    const flagged = state.items.filter(
+      (i) => i.needs_check && !i.is_blank && !i.retrying && !i.rechecking
+    );
+    if (flagged.length === 0) return;
+
+    const ids = new Set(flagged.map((i) => i.id));
+    setState((prev) => ({
+      ...prev,
+      city,
+      citySuggestion: null,
+      citySuggestionShare: null,
+      items: prev.items.map((i) =>
+        ids.has(i.id) ? { ...i, retrying: true, error_message: null, needs_check: false } : i
+      ),
+    }));
+
+    try {
+      for (let i = 0; i < flagged.length; i += 5) {
+        const batch = flagged.slice(i, i + 5);
+        const resp = await geocodeBatch(
+          batch.map((b) => ({ index: b.id, original: b.original, trimmed: b.trimmed })),
+          undefined,
+          city
+        );
+        setState((prev) => {
+          const next = prev.items.map((item) => ({ ...item }));
+          for (const r of resp.results) {
+            const idx = next.findIndex((x) => x.id === r.index);
+            if (idx >= 0) {
+              next[idx] = { ...mergeResult(next[idx], r), retrying: false };
+            }
+          }
+          return { ...prev, items: next };
+        });
+      }
+    } catch {
+      // Rows keep their text and stay editable, so the user can try again.
+      setState((prev) => ({
+        ...prev,
+        items: prev.items.map((i) =>
+          ids.has(i.id)
+            ? {
+                ...i,
+                retrying: false,
+                status: "error",
+                error_kind: "retryable",
+                error_message: RETRYABLE_ERROR_MESSAGE,
+              }
+            : i
+        ),
+      }));
+    }
+  }
+
+  return {
+    state,
+    run,
+    selectCandidate,
+    confirmPartial,
+    retryItem,
+    editItem,
+    setCity,
+    retryFlaggedInCity,
+  };
 }

@@ -44,3 +44,39 @@ describe("AddressInput - City field", () => {
     expect(screen.getByPlaceholderText(/first address/i)).toBeInTheDocument();
   });
 });
+describe("AddressInput - suggested city", () => {
+  function SuggestionHarness({ city = "" }: { city?: string }) {
+    const [value, setValue] = useState(city);
+    return (
+      <AddressInput
+        onRun={() => {}}
+        loading={false}
+        city={value}
+        onCityChange={setValue}
+        citySuggestion="Київ"
+        onAcceptSuggestion={() => setValue("Київ")}
+      />
+    );
+  }
+
+  it("offers the suggested city when the field is blank", () => {
+    render(<SuggestionHarness />);
+    expect(screen.getByText(/Most addresses resolved in Київ/)).toBeInTheDocument();
+  });
+
+  it("fills the field when the suggestion is accepted", async () => {
+    render(<SuggestionHarness />);
+    await userEvent.click(screen.getByRole("button", { name: "Use Київ" }));
+    expect((screen.getByLabelText("City") as HTMLInputElement).value).toBe("Київ");
+  });
+
+  it("stops offering once the field has a city", () => {
+    render(<SuggestionHarness city="Львів" />);
+    expect(screen.queryByRole("button", { name: "Use Київ" })).toBeNull();
+  });
+
+  it("shows nothing without a suggestion", () => {
+    render(<Harness />);
+    expect(screen.queryByRole("button", { name: /Use / })).toBeNull();
+  });
+});

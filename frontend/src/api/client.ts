@@ -59,10 +59,18 @@ export interface GeocodeBatchResponseItem {
   unit_inferred?: boolean;
   dropped_candidates?: number;
   scope_message?: string | null;
+  found_house?: string | null;
+  found_city?: string | null;
+  needs_check?: boolean;
+  needs_check_reason?: string | null;
+  retry_city?: string | null;
 }
 
 export interface GeocodeBatchResponse {
   results: GeocodeBatchResponseItem[];
+  /** Offered for the City field when it was left blank. Never applied silently. */
+  city_suggestion?: string | null;
+  city_suggestion_share?: number | null;
 }
 
 export async function parse(text: string): Promise<ParseResponse> {

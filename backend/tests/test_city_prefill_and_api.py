@@ -19,9 +19,17 @@ class StubService:
 
     def __init__(self) -> None:
         self.seen_city: str | None = None
+        self.city_suggestion = None
+        # Set by a test to control what the API returns.
+        self.result: BatchGeocodeResponseItem | None = None
+
+    def reset(self) -> None:
+        pass
 
     async def geocode_batch(self, items, city=None):
         self.seen_city = city
+        if self.result is not None:
+            return [self.result]
         return [
             BatchGeocodeResponseItem(
                 index=item.index,
@@ -153,3 +161,59 @@ def test_provider_is_shared_across_requests():
     from app.api.geocode import get_geocoder
 
     assert get_geocoder() is get_geocoder()
+
+# --- slice 1.6: precision of "resolved" -------------------------------------
+# Fixtures are invented. Coordinates are real city centres or invented
+# coordinates, never a real street address.
+
+
+def test_api_exposes_house_mismatch_fields(client, stub_service):
+    stub_service.result = BatchGeocodeResponseItem(
+        index=0, original="a", status="ambiguous",
+        house="40", found_house="40/5", found_city="Київ",
+        needs_check=True, needs_check_reason="Found 40/5, you asked for 40",
+        retry_city="Київ",
+    )
+    resp = client.post(
+        "/api/geocode",
+        json={"items": [{"index": 0, "original": "a", "trimmed": "a"}]},
+    )
+    row = resp.json()["results"][0]
+    assert row["house"] == "40"
+    assert row["found_house"] == "40/5"
+    assert row["found_city"] == "Київ"
+    assert row["needs_check"] is True
+    assert row["retry_city"] == "Київ"
+
+
+def test_api_exposes_city_suggestion(client):
+    from app.services.list_checks import CitySuggestion
+
+    class SuggestingService(StubService):
+        def __init__(self):
+            super().__init__()
+            self.city_suggestion = CitySuggestion(
+                city="Київ", resolved_count=7, total_confident=8, share=0.875
+            )
+
+    app.dependency_overrides[get_geocode_service] = lambda: SuggestingService()
+    try:
+        resp = client.post(
+            "/api/geocode",
+            json={"items": [{"index": 0, "original": "a", "trimmed": "a"}]},
+        )
+    finally:
+        app.dependency_overrides.clear()
+    body = resp.json()
+    assert body["city_suggestion"] == "Київ"
+    assert body["city_suggestion_share"] == pytest.approx(0.875)
+
+
+def test_no_city_suggestion_when_the_service_has_none(client, stub_service):
+    resp = client.post(
+        "/api/geocode",
+        json={"items": [{"index": 0, "original": "a", "trimmed": "a"}]},
+    )
+    body = resp.json()
+    assert body["city_suggestion"] is None
+    assert body["city_suggestion_share"] is None

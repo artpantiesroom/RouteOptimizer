@@ -66,3 +66,18 @@ class GeocodeResult:
     dropped_candidates: int = 0
     # Plain-language note about the discarded candidates.
     scope_message: Optional[str] = None
+    # House number the geocoder actually found, when it differs from the one
+    # that was asked for. Drives the "found 40/5, you asked for 40" copy.
+    found_house: Optional[str] = None
+    # City the chosen coordinate sits in, when it is known.
+    found_city: Optional[str] = None
+    # True when the row needs a human look: outside the active city, or so far
+    # from the rest of the route that it is probably a mistake.
+    needs_check: bool = False
+    # Why the row needs a look, in user-facing words.
+    needs_check_reason: Optional[str] = None
+    # City the user could re-run this row in, when one is known.
+    retry_city: Optional[str] = None
+    # True when the provider returned candidates but every one of them fell
+    # outside the active city. Triggers the street-only last-resort lookup.
+    all_out_of_scope: bool = False

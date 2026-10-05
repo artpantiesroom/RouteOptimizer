@@ -239,13 +239,18 @@ class NominatimGeocoder:
             if self._has_house_number(c.address if isinstance(c.address, dict) else None)
         ]
         if precise:
+            # Every precise candidate is returned, even the single one. The
+            # service layer still has to apply the city scope and check the
+            # house number, and it can only do that from the candidate list: a
+            # result carrying just a coordinate bypasses both and comes out
+            # "resolved" for the wrong street.
             return GeocodeResult(
                 status=GeocodeStatus.RESOLVED if len(precise) == 1 else GeocodeStatus.AMBIGUOUS,
                 coordinate=(
                     Coordinate(precise[0].latitude, precise[0].longitude) if len(precise) == 1 else None
                 ),
                 display_name=precise[0].display_name if len(precise) == 1 else None,
-                candidates=precise if len(precise) > 1 else [],
+                candidates=precise,
             )
 
         # Nothing reached house level: keep every street-level hit so the service

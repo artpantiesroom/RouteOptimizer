@@ -7,6 +7,7 @@ postcode stripping, unit extraction, street-term mapping, city detection.
 import pytest
 
 from app.services.address_normalizer import (
+    house_numbers_equal,
     map_adjectives,
     KNOWN_CITIES,
     detect_city,
@@ -312,3 +313,58 @@ def test_structured_street_uses_the_real_name_for_case_1():
 def test_structured_street_uses_the_real_name_for_case_4():
     r = normalize("ул. Бульварно-Кудрявская, 15-9, Киев, 02000")
     assert r.structured_street == "вулиця Бульварно-Кудрявська, 15"
+
+
+# --- 6. house number equality ----------------------------------------------
+
+
+@pytest.mark.parametrize(
+    "requested,found",
+    [
+        # Letter suffix present on both sides.
+        ("6А", "6а"),
+        ("6А", "6A"),  # Latin look-alike
+        ("6А", "6-А"),
+        ("6А", "6 - А"),
+        ("6а", "6 - а"),
+        ("17-Б", "17Б"),
+        ("17-А", "17a"),
+        # Separator used as a range.
+        ("51-53", "51/53"),
+        ("51–53", "51/53"),
+        ("51—53", "51/53"),
+        ("12/2", "12-2"),
+        # Plain matches.
+        ("1", "1"),
+        ("3", "3."),
+        ("86", " 86 "),
+    ],
+)
+def test_house_numbers_equal(requested, found):
+    assert house_numbers_equal(requested, found) is True
+
+
+@pytest.mark.parametrize(
+    "requested,found",
+    [
+        ("1", "130/1"),
+        ("40", "40/5"),
+        ("12", "12А"),
+        ("12А", "12"),
+        ("1", "2"),
+        ("51", "51-53"),
+        ("51/53", "51"),
+        ("1/2", "12"),
+        ("12", "1/2"),
+        ("", "1"),
+        ("1", ""),
+    ],
+)
+def test_house_numbers_not_equal(requested, found):
+    assert house_numbers_equal(requested, found) is False
+
+
+def test_house_numbers_equal_needs_both_sides():
+    assert house_numbers_equal(None, "1") is False
+    assert house_numbers_equal("1", None) is False
+    assert house_numbers_equal(None, None) is False
