@@ -2,7 +2,9 @@ from __future__ import annotations
 
 import re
 from dataclasses import dataclass, field
-from typing import List
+from typing import List, Optional
+
+from .address_normalizer import detect_city
 
 
 @dataclass
@@ -20,6 +22,9 @@ class ParsedList:
     items: List[ParsedAddress]
     total: int
     non_blank: int
+    # City recognised in the first address that names one, so the UI can
+    # prefill its City field. None when no known city appears.
+    suggested_city: Optional[str] = None
 
 
 class ParseService:
@@ -78,4 +83,20 @@ class ParseService:
                 item.duplicate_of = None
 
         non_blank = sum(1 for i in items if not i.is_blank)
-        return ParsedList(items=items, total=len(items), non_blank=non_blank)
+        suggested_city = self._suggest_city(items)
+        return ParsedList(
+            items=items,
+            total=len(items),
+            non_blank=non_blank,
+            suggested_city=suggested_city,
+        )
+
+    def _suggest_city(self, items: List[ParsedAddress]) -> Optional[str]:
+        """First recognised city in list order."""
+        for item in items:
+            if item.is_blank:
+                continue
+            profile = detect_city(item.trimmed)
+            if profile is not None:
+                return profile.display
+        return None

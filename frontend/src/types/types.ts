@@ -42,7 +42,35 @@ export interface GeocodeResultItem {
   selectedCandidateIndex?: number;
   confirmed?: boolean; // for partial after explicit confirmation
   retrying?: boolean; // a per-row retry is in flight
+  /** The exact text that was sent to the address search service. */
+  searched_as?: string | null;
+  /** House number, needed to explain an inferred unit. */
+  house?: string | null;
+  /** Apartment / office / entrance / floor taken out of the address. */
+  unit?: string | null;
+  unit_kind?: UnitKind | null;
+  /** True when the unit was read from an ambiguous "15-9" form. */
+  unit_inferred?: boolean;
+  /** Matches that were discarded because they were outside the chosen city. */
+  dropped_candidates?: number;
+  /** Plain-language note about the discarded matches. */
+  scope_message?: string | null;
+  /** A per-row re-check is in flight (after an in-place edit). */
+  rechecking?: boolean;
+  /** Set when the address search service could not be reached for this row. */
+  offline?: boolean;
 }
+
+/** What a house unit refers to, as understood from the address text. */
+export type UnitKind = "apartment" | "office" | "entrance" | "floor";
+
+/** Plain-language label for a unit, used in the interpretation line. */
+export const UNIT_KIND_LABELS: Record<UnitKind, string> = {
+  apartment: "Apartment",
+  office: "Office",
+  entrance: "Entrance",
+  floor: "Floor",
+};
 
 export interface ParsedItem {
   index: number;

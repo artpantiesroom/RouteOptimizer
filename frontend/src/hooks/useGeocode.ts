@@ -1,15 +1,18 @@
 import { useState, useRef } from "react";
-import { geocodeBatch, parse, type GeocodeItem } from "../api/client";
+import { geocodeBatch, parse, type GeocodeBatchResponseItem, type GeocodeItem } from "../api/client";
 import type {
   ErrorKind,
   GeocodeResultItem,
   GeocodeStatus,
   ParsedItem,
+  UnitKind,
 } from "../types/types";
 
 // User-facing copy. Must stay free of technical terms (geocoding, provider, HTTP).
 // Rendered by ResultItem, which owns the wording shown to the user.
 const RETRYABLE_ERROR_MESSAGE = "Could not check this address right now. Try again.";
+const OFFLINE_ERROR_MESSAGE =
+  "Could not reach the address search. Your edit is kept, try again when you are back online.";
 
 export interface UseGeocodeState {
   items: GeocodeResultItem[];
@@ -17,6 +20,32 @@ export interface UseGeocodeState {
   processed: number;
   loading: boolean;
   error: string | null;
+  /** Scope applied to every row. Prefilled from the first address. */
+  city: string;
+}
+
+/** Fold a backend result onto a row, clearing any previous answer. */
+function mergeResult(item: GeocodeResultItem, r: GeocodeBatchResponseItem): GeocodeResultItem {
+  return {
+    ...item,
+    status: (r.status ?? "error") as GeocodeStatus,
+    coordinate: r.coordinate,
+    display_name: r.display_name,
+    candidates: r.candidates,
+    error_message: r.error_message ?? null,
+    message: r.message ?? null,
+    error_kind: (r.error_kind as ErrorKind | undefined) ?? undefined,
+    searched_as: r.searched_as ?? null,
+    house: r.house ?? null,
+    unit: r.unit ?? null,
+    unit_kind: (r.unit_kind as UnitKind | undefined) ?? null,
+    unit_inferred: r.unit_inferred ?? false,
+    dropped_candidates: r.dropped_candidates ?? 0,
+    scope_message: r.scope_message ?? null,
+    selectedCandidateIndex: undefined,
+    confirmed: undefined,
+    offline: false,
+  };
 }
 
 export function useGeocode() {
@@ -26,6 +55,7 @@ export function useGeocode() {
     processed: 0,
     loading: false,
     error: null,
+    city: "",
   });
   const abortControllerRef = useRef<AbortController | null>(null);
   const latestRunIdRef = useRef(0);
@@ -52,24 +82,31 @@ export function useGeocode() {
     const controller = new AbortController();
     abortControllerRef.current = controller;
 
-    setState({ items: [], total: 0, processed: 0, loading: true, error: null });
+    setState((prev) => ({ ...prev, items: [], total: 0, processed: 0, loading: true, error: null }));
     try {
       const parsed = await parse(text);
       if (runId !== latestRunIdRef.current) {
         return;
+      }
+      // Prefill the City field from the first address that names a known city,
+      // but never over what the user already typed.
+      const suggested = state.city.trim() ? state.city : parsed.suggested_city ?? "";
+      if (suggested !== state.city) {
+        setCity(suggested);
       }
       const results: GeocodeResultItem[] = parsed.items.map(mapParsedToResult);
       if (runId !== latestRunIdRef.current) {
         return;
       }
       runBaseItemsRef.current.set(runId, results.map((r) => ({ ...r })));
-      setState({
+      setState((prev) => ({
+        ...prev,
         items: results,
         total: parsed.non_blank,
         processed: 0,
         loading: true,
         error: null,
-      });
+      }));
 
       const toProcess = results.filter((r) => !r.is_blank);
       let processedCount = 0;
@@ -85,7 +122,7 @@ export function useGeocode() {
         }));
         let resp;
         try {
-          resp = await geocodeBatch(batchItems, controller.signal);
+          resp = await geocodeBatch(batchItems, controller.signal, suggested);
         } catch (e: any) {
           if (e.name === "AbortError") {
             return;
@@ -105,16 +142,7 @@ export function useGeocode() {
           for (const r of resp.results) {
             const idx = next.findIndex((x) => x.id === r.index);
             if (idx >= 0) {
-              next[idx] = {
-                ...next[idx],
-                status: r.status as GeocodeStatus,
-                coordinate: r.coordinate,
-                display_name: r.display_name,
-                candidates: r.candidates,
-                error_message: r.error_message,
-                message: r.message,
-                error_kind: r.error_kind as ErrorKind | undefined,
-              };
+              next[idx] = mergeResult(next[idx], r);
             }
           }
           runBaseItemsRef.current.set(runId, next.map((n) => ({ ...n })));
@@ -145,6 +173,7 @@ export function useGeocode() {
       });
     }
   }
+
   function selectCandidate(itemId: number, candidateIndex: number) {
     setState((prev) => {
       const next = [...prev.items];
@@ -192,25 +221,17 @@ export function useGeocode() {
     }));
 
     try {
-      const resp = await geocodeBatch([
-        { index: item.id, original: item.original, trimmed: item.trimmed },
-      ]);
+      const resp = await geocodeBatch(
+        [{ index: item.id, original: item.original, trimmed: item.trimmed }],
+        undefined,
+        state.city
+      );
       const r = resp.results[0];
       setState((prev) => ({
         ...prev,
         items: prev.items.map((i) =>
           i.id === itemId
-            ? {
-                ...i,
-                retrying: false,
-                status: (r?.status ?? "error") as GeocodeStatus,
-                coordinate: r?.coordinate,
-                display_name: r?.display_name,
-                candidates: r?.candidates,
-                error_message: r?.error_message ?? null,
-                message: r?.message ?? null,
-                error_kind: (r?.error_kind as ErrorKind | undefined) ?? undefined,
-              }
+            ? { ...mergeResult(i, r ?? ({ index: item.id, original: item.original, status: "error" } as GeocodeBatchResponseItem)), retrying: false }
             : i
         ),
       }));
@@ -233,5 +254,69 @@ export function useGeocode() {
     }
   }
 
-  return { state, run, selectCandidate, confirmPartial, retryItem };
+  /**
+   * Edit one address in place and re-run just that row. The edited text
+   * replaces the row's own text so the user always sees what was searched.
+   */
+  async function editItem(itemId: number, newText: string) {
+    const trimmed = newText.trim();
+    if (!trimmed) return;
+    const existing = state.items.find((i) => i.id === itemId);
+    if (!existing || existing.rechecking) return;
+
+    setState((prev) => ({
+      ...prev,
+      items: prev.items.map((i) =>
+        i.id === itemId
+          ? { ...i, trimmed, original: trimmed, rechecking: true, error_message: null }
+          : i
+      ),
+    }));
+
+    try {
+      const resp = await geocodeBatch(
+        [{ index: itemId, original: trimmed, trimmed }],
+        undefined,
+        state.city
+      );
+      const r = resp.results[0];
+      setState((prev) => ({
+        ...prev,
+        items: prev.items.map((i) =>
+          i.id === itemId
+            ? {
+                ...mergeResult(
+                  i,
+                  r ?? ({ index: itemId, original: trimmed, status: "error" } as GeocodeBatchResponseItem)
+                ),
+                rechecking: false,
+              }
+            : i
+        ),
+      }));
+    } catch {
+      // Keep the edit so it is not lost; the user can run the row again.
+      setState((prev) => ({
+        ...prev,
+        items: prev.items.map((i) =>
+          i.id === itemId
+            ? {
+                ...i,
+                rechecking: false,
+                status: "error",
+                error_kind: "retryable",
+                offline: true,
+                error_message: OFFLINE_ERROR_MESSAGE,
+              }
+            : i
+        ),
+      }));
+    }
+  }
+
+  function setCity(city: string) {
+    setState((prev) => ({ ...prev, city }));
+  }
+
+  return { state, run, selectCandidate, confirmPartial, retryItem, editItem, setCity };
 }

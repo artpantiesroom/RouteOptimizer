@@ -19,6 +19,8 @@ export interface ParseResponse {
   items: ParsedItem[];
   total: number;
   non_blank: number;
+  /** City recognised in the first address, used to prefill the City field. */
+  suggested_city?: string | null;
 }
 
 export interface GeocodeItem {
@@ -29,6 +31,8 @@ export interface GeocodeItem {
 
 export interface GeocodeBatchRequest {
   items: GeocodeItem[];
+  /** Scope for candidate validation; omit to disable city filtering. */
+  city?: string | null;
 }
 
 export interface GeocodeCandidate {
@@ -48,6 +52,13 @@ export interface GeocodeBatchResponseItem {
   error_message?: string;
   message?: string;
   error_kind?: string;
+  searched_as?: string;
+  house?: string | null;
+  unit?: string | null;
+  unit_kind?: string | null;
+  unit_inferred?: boolean;
+  dropped_candidates?: number;
+  scope_message?: string | null;
 }
 
 export interface GeocodeBatchResponse {
@@ -68,7 +79,8 @@ export async function parse(text: string): Promise<ParseResponse> {
 
 export async function geocodeBatch(
   items: GeocodeItem[],
-  signal?: AbortSignal
+  signal?: AbortSignal,
+  city?: string | null
 ): Promise<GeocodeBatchResponse> {
   if (items.length > 5) {
     throw new Error("Batch size cannot exceed 5");
@@ -76,7 +88,7 @@ export async function geocodeBatch(
   const res = await fetch(`${API_BASE}/geocode`, {
     method: "POST",
     headers: { "Content-Type": "application/json" },
-    body: JSON.stringify({ items }),
+    body: JSON.stringify({ items, city: city || null }),
     signal,
   });
   if (!res.ok) {

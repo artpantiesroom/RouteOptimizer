@@ -8,6 +8,7 @@ interface Props {
   onSelectCandidate: (itemId: number, candidateIndex: number) => void;
   onConfirmPartial: (itemId: number) => void;
   onRetry: (itemId: number) => void;
+  onEdit: (itemId: number, newText: string) => void;
 }
 
 export function ResultsList({
@@ -17,6 +18,7 @@ export function ResultsList({
   onSelectCandidate,
   onConfirmPartial,
   onRetry,
+  onEdit,
 }: Props) {
   const nonBlank = items.filter((i) => !i.is_blank).length;
   const recognized = items.filter((i) => {
@@ -40,6 +42,7 @@ export function ResultsList({
           onSelectCandidate={(idx) => onSelectCandidate(item.id, idx)}
           onConfirmPartial={() => onConfirmPartial(item.id)}
           onRetry={() => onRetry(item.id)}
+          onEdit={(newText) => onEdit(item.id, newText)}
         />
       ))}
     </div>

@@ -55,3 +55,14 @@ class GeocodeResult:
     error_message: Optional[str] = None
     message: Optional[str] = None
     error_kind: Optional[ErrorKind] = None
+    # The exact text we asked the provider for, so the UI can show it.
+    searched_as: Optional[str] = None
+    # House-unit interpretation, when the input contained one.
+    house: Optional[str] = None
+    unit: Optional[str] = None
+    unit_kind: Optional[str] = None
+    unit_inferred: bool = False
+    # Candidates discarded because they fell outside the chosen city.
+    dropped_candidates: int = 0
+    # Plain-language note about the discarded candidates.
+    scope_message: Optional[str] = None

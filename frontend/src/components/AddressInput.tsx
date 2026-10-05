@@ -3,12 +3,24 @@ import { useState } from "react";
 interface Props {
   onRun: (text: string) => void;
   loading: boolean;
+  city: string;
+  onCityChange: (city: string) => void;
 }
 
-export function AddressInput({ onRun, loading }: Props) {
+export function AddressInput({ onRun, loading, city, onCityChange }: Props) {
   const [text, setText] = useState("");
   return (
     <div>
+      <label htmlFor="city-field" style={{ display: "block", marginBottom: "4px" }}>
+        City
+      </label>
+      <input
+        id="city-field"
+        value={city}
+        onChange={(e) => onCityChange(e.target.value)}
+        placeholder="Filled in from the first address; edit it if needed"
+        style={{ width: "100%", fontSize: "16px", marginBottom: "12px" }}
+      />
       <textarea
         value={text}
         onChange={(e) => setText(e.target.value)}

@@ -1,3 +1,5 @@
+from functools import lru_cache
+
 from fastapi import APIRouter, Depends, HTTPException
 from pydantic import BaseModel, Field
 
@@ -16,6 +18,8 @@ class GeocodeItem(BaseModel):
 
 class GeocodeBatchRequest(BaseModel):
     items: list[GeocodeItem] = Field(..., min_length=1, max_length=5)
+    # Scope for candidate validation. Left blank, no city filter is applied.
+    city: str | None = None
 
 
 class GeocodeCandidate(BaseModel):
@@ -35,14 +39,31 @@ class GeocodeBatchResponseItem(BaseModel):
     error_message: str | None = None
     message: str | None = None
     error_kind: str | None = None
+    searched_as: str | None = None
+    house: str | None = None
+    unit: str | None = None
+    unit_kind: str | None = None
+    unit_inferred: bool = False
+    dropped_candidates: int = 0
+    scope_message: str | None = None
 
 
 class GeocodeBatchResponse(BaseModel):
     results: list[GeocodeBatchResponseItem]
 
 
-def get_geocoder(settings: Settings = Depends(get_settings)) -> NominatimGeocoder:
-    return NominatimGeocoder(settings)
+@lru_cache(maxsize=1)
+def _shared_geocoder() -> NominatimGeocoder:
+    """One provider instance for the whole process.
+
+    The rate limiter and the response cache live on the instance, so building a
+    new one per request would reset both.
+    """
+    return NominatimGeocoder(get_settings())
+
+
+def get_geocoder() -> NominatimGeocoder:
+    return _shared_geocoder()
 
 
 def get_geocode_service(geocoder: NominatimGeocoder = Depends(get_geocoder)) -> GeocodeService:
@@ -56,12 +77,13 @@ async def geocode_batch(
 ):
     if len(req.items) > 5:
         raise HTTPException(status_code=400, detail="Batch size cannot exceed 5")
+    city = (req.city or "").strip() or None
     try:
         items = [
             BatchGeocodeRequestItem(index=i.index, original=i.original, trimmed=i.trimmed)
             for i in req.items
         ]
-        results = await service.geocode_batch(items)
+        results = await service.geocode_batch(items, city=city)
         return GeocodeBatchResponse(
             results=[
                 GeocodeBatchResponseItem(
@@ -74,6 +96,13 @@ async def geocode_batch(
                     error_message=r.error_message,
                     message=r.message,
                     error_kind=r.error_kind,
+                    searched_as=r.searched_as,
+                    house=r.house,
+                    unit=r.unit,
+                    unit_kind=r.unit_kind,
+                    unit_inferred=r.unit_inferred,
+                    dropped_candidates=r.dropped_candidates,
+                    scope_message=r.scope_message,
                 )
                 for r in results
             ]

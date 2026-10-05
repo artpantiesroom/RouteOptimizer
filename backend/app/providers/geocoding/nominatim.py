@@ -53,29 +53,6 @@ def _log_provider_failure(response: httpx.Response) -> None:
 def _should_log_failure(status: int) -> bool:
     return status in SETUP_STATUSES or 500 <= status < 600
 
-# Heuristic: result types that typically indicate building/house level precision
-BUILDING_LIKE_TYPES = {
-    "building",
-    "house",
-    "residential",
-    "apartments",
-    "yes",  # sometimes used for buildings
-    "office",
-    "commercial",
-    "retail",
-    "industrial",
-    "warehouse",
-    "hotel",
-    "school",
-    "hospital",
-    "place_of_worship",
-    "government",
-    "public_building",
-    "civic",
-    "entrance",
-    "room",
-}
-
 
 class NominatimGeocoder:
     def __init__(self, settings: Settings) -> None:
@@ -89,17 +66,52 @@ class NominatimGeocoder:
         self._last_request_time = 0.0
         self._cache: Dict[str, GeocodeResult] = {}
 
-    def _canonical_key(self, address: str) -> str:
-        return address.strip().lower()
+    def _cache_key(self, params: Dict[str, Any]) -> str:
+        parts = [f"{name}={str(params[name]).strip().lower()}" for name in ("q", "street", "city") if params.get(name)]
+        if self._country_codes:
+            parts.append(f"cc={self._country_codes}")
+        return "|".join(parts)
 
     async def geocode(self, address: str) -> GeocodeResult:
-        key = self._canonical_key(address)
-        if key in self._cache:
-            cached = self._cache[key]
-            # Never cache error results per requirements
-            if cached.status != GeocodeStatus.ERROR:
-                return cached
-            # If somehow cached error, don't return it; proceed to fetch fresh
+        """Free-text lookup. ``q`` is used, so no structured field is sent."""
+        data, error = await self._lookup({"q": address})
+        if error is not None:
+            return error
+        return self._classify_response(data)
+
+    async def geocode_structured(self, street: str, city: str) -> GeocodeResult:
+        """Structured lookup.
+
+        Nominatim rejects a request that combines ``q`` with any structured
+        field, so this attempt sends only ``street``/``city``. Verified live:
+        that form returns Kyiv-only results where the free-text query also
+        returns other oblast towns.
+        """
+        data, error = await self._lookup({"street": street, "city": city})
+        if error is not None:
+            return error
+        return self._classify_response(data)
+
+    async def _lookup(
+        self, params: Dict[str, Any]
+    ) -> tuple[Optional[Any], Optional[GeocodeResult]]:
+        """Run one request. Returns ``(data, None)`` or ``(None, error_result)``."""
+        key = self._cache_key(params)
+        cached = self._cache.get(key)
+        if cached is not None:
+            return None, cached
+
+        request_params: Dict[str, Any] = {
+            **params,
+            "format": "json",
+            "addressdetails": 1,
+            "limit": 5,
+            "dedupe": 1,
+        }
+        if self._country_codes:
+            request_params["countrycodes"] = self._country_codes
+
+        headers = {"User-Agent": self._user_agent}
 
         async with self._lock:
             # Enforce rate limit before making real network call
@@ -108,28 +120,16 @@ class NominatimGeocoder:
             if elapsed < self._rate_limit_delay:
                 await asyncio.sleep(self._rate_limit_delay - elapsed)
 
-            params: Dict[str, Any] = {
-                "q": address,
-                "format": "json",
-                "addressdetails": 1,
-                "limit": 5,
-                "dedupe": 1,
-            }
-            if self._country_codes:
-                params["countrycodes"] = self._country_codes
-
-            headers = {"User-Agent": self._user_agent}
-
             try:
                 async with httpx.AsyncClient(timeout=self._timeout) as client:
-                    resp = await client.get(f"{self._base_url}", params=params, headers=headers)
+                    resp = await client.get(f"{self._base_url}", params=request_params, headers=headers)
                 self._last_request_time = time.monotonic()
 
                 if resp.status_code == 429:
                     # Rate limited upstream: temporary, so the user can retry.
                     if _should_log_failure(resp.status_code):
                         _log_provider_failure(resp)
-                    return GeocodeResult(
+                    return None, GeocodeResult(
                         status=GeocodeStatus.ERROR,
                         error_message="rate limited",
                         error_kind=ErrorKind.RETRYABLE,
@@ -137,7 +137,7 @@ class NominatimGeocoder:
 
                 if resp.status_code in SETUP_STATUSES:
                     _log_provider_failure(resp)
-                    return GeocodeResult(
+                    return None, GeocodeResult(
                         status=GeocodeStatus.ERROR,
                         error_message=f"service rejected request (status {resp.status_code})",
                         error_kind=ErrorKind.SETUP,
@@ -145,7 +145,7 @@ class NominatimGeocoder:
 
                 if resp.status_code >= 500:
                     _log_provider_failure(resp)
-                    return GeocodeResult(
+                    return None, GeocodeResult(
                         status=GeocodeStatus.ERROR,
                         error_message=f"service unavailable (status {resp.status_code})",
                         error_kind=ErrorKind.RETRYABLE,
@@ -155,7 +155,7 @@ class NominatimGeocoder:
                 data = resp.json()
             except httpx.TimeoutException:
                 self._last_request_time = time.monotonic()
-                return GeocodeResult(
+                return None, GeocodeResult(
                     status=GeocodeStatus.ERROR,
                     error_message="request timed out",
                     error_kind=ErrorKind.RETRYABLE,
@@ -165,25 +165,25 @@ class NominatimGeocoder:
                 status_code = e.response.status_code if e.response is not None else None
                 if status_code is not None and _should_log_failure(status_code):
                     _log_provider_failure(e.response)
-                return GeocodeResult(
+                return None, GeocodeResult(
                     status=GeocodeStatus.ERROR,
                     error_message=f"unexpected response (status {status_code})",
                     error_kind=ErrorKind.SETUP,
                 )
             except Exception:
                 self._last_request_time = time.monotonic()
-                return GeocodeResult(
+                return None, GeocodeResult(
                     status=GeocodeStatus.ERROR,
                     error_message="network failure",
                     error_kind=ErrorKind.RETRYABLE,
                 )
 
-        # Classify and validate response (lock released after request)
-        classification = self._classify_response(data, address)
+        # Classify outside the lock so the next request is not blocked by us.
+        result = self._classify_response(data)
         # Cache only non-error statuses
-        if classification.status != GeocodeStatus.ERROR:
-            self._cache[key] = classification
-        return classification
+        if result.status != GeocodeStatus.ERROR:
+            self._cache[key] = result
+        return data, None
 
     def _has_house_number(self, addr: Optional[Dict[str, Any]]) -> bool:
         if not addr:
@@ -197,41 +197,7 @@ class NominatimGeocoder:
             return False
         return True
 
-    def _is_building_like_type(self, item: Dict[str, Any]) -> bool:
-        rtype = (item.get("type") or "").lower()
-        rclass = (item.get("class") or "").lower()
-        if rtype in BUILDING_LIKE_TYPES or rclass in BUILDING_LIKE_TYPES:
-            return True
-        return False
-
-    def _is_street_or_locality_level(self, item: Dict[str, Any]) -> bool:
-        rtype = (item.get("type") or "").lower()
-        # street-like or locality-like
-        street_like = {
-            "road",
-            "street",
-            "residential",
-            "pedestrian",
-            "footway",
-            "path",
-            "hamlet",
-            "village",
-            "town",
-            "city",
-            "county",
-            "state",
-            "country",
-            "suburb",
-            "neighbourhood",
-            "quarter",
-            "borough",
-            "municipality",
-        }
-        if rtype in street_like:
-            return True
-        return False
-
-    def _classify_response(self, data: Any, address: str) -> GeocodeResult:
+    def _classify_response(self, data: Any) -> GeocodeResult:
         if not isinstance(data, list) or len(data) == 0:
             return GeocodeResult(
                 status=GeocodeStatus.NOT_FOUND,
@@ -245,9 +211,8 @@ class NominatimGeocoder:
                 lon = float(item.get("lon"))
             except (TypeError, ValueError):
                 continue
-            display_name = str(item.get("display_name", ""))
             cand = GeocodeCandidate(
-                display_name=display_name,
+                display_name=str(item.get("display_name", "")),
                 latitude=lat,
                 longitude=lon,
                 place_id=item.get("place_id"),
@@ -264,50 +229,30 @@ class NominatimGeocoder:
                 error_message="No valid results found",
             )
 
-        # Only up to 5 requested
         candidates = candidates[:5]
 
-        if len(candidates) == 1:
-            c = candidates[0]
-            addr = c.address if isinstance(c.address, dict) else None
-            has_hn = self._has_house_number(addr)
-            is_bldg = self._is_building_like_type(candidates[0]) if False else self._is_building_like_type(data[0])  # data item
-            # better check from original data item
-            pass
-
-        # Recheck using original data items
-        orig_items = data[: len(candidates)]
-        if len(orig_items) == 1:
-            item = orig_items[0]
-            addr = item.get("address") if isinstance(item.get("address"), dict) else None
-            has_hn = self._has_house_number(addr)
-            is_bldg_like = self._is_building_like_type(item)
-            # Resolved only if has house number OR building-like type at building/house level
-            # Also accept if result type indicates precise point
-            precise = has_hn or is_bldg_like
-            if precise:
-                c = candidates[0]
-                return GeocodeResult(
-                    status=GeocodeStatus.RESOLVED,
-                    coordinate=Coordinate(c.latitude, c.longitude),
-                    display_name=c.display_name,
-                )
-            # Otherwise partial - street/locality level
-            c = candidates[0]
+        # A candidate counts as house-level when the provider resolved an actual
+        # house number, or returned the building itself.
+        precise = [
+            c
+            for c in candidates
+            if self._has_house_number(c.address if isinstance(c.address, dict) else None)
+        ]
+        if precise:
             return GeocodeResult(
-                status=GeocodeStatus.PARTIAL,
-                coordinate=None,
-                display_name=c.display_name,
-                candidates=[c],
-                error_message="Found street/locality but not a specific house/building number",
-                message="Partial match: house/building number missing",
+                status=GeocodeStatus.RESOLVED if len(precise) == 1 else GeocodeStatus.AMBIGUOUS,
+                coordinate=(
+                    Coordinate(precise[0].latitude, precise[0].longitude) if len(precise) == 1 else None
+                ),
+                display_name=precise[0].display_name if len(precise) == 1 else None,
+                candidates=precise if len(precise) > 1 else [],
             )
 
-        # Multiple candidates - ambiguous
-        # If clearly one is stronger AND has house number/building-like, still ambiguous list is better for user choice
-        # Return all as ambiguous
+        # Nothing reached house level: keep every street-level hit so the service
+        # layer can group them and report one approximate representative.
         return GeocodeResult(
-            status=GeocodeStatus.AMBIGUOUS,
+            status=GeocodeStatus.PARTIAL,
             candidates=candidates,
-            error_message="Multiple comparable candidates found",
+            error_message="Found street/locality but not a specific house/building number",
+            message="Partial match: house/building number missing",
         )

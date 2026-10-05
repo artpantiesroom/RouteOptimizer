@@ -26,6 +26,7 @@ class ParseResponse(BaseModel):
     items: list[ParsedItem]
     total: int
     non_blank: int
+    suggested_city: str | None = None
 
 
 @router.post("/parse", response_model=ParseResponse)
@@ -46,6 +47,7 @@ async def parse(req: ParseRequest):
             ],
             total=parsed.total,
             non_blank=parsed.non_blank,
+            suggested_city=parsed.suggested_city,
         )
     except Exception as e:
         raise HTTPException(status_code=400, detail=str(e))
