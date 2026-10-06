@@ -589,3 +589,63 @@ describe("ResultItem - needs check", () => {
     expect(screen.queryByText(/was asked for/)).toBeNull();
   });
 });
+
+describe("ResultItem - skip", () => {
+  it("offers a Skip button only when the flow is wired up", () => {
+    render(
+      <ResultItem
+        item={makeItem({ status: "resolved" })}
+        onSelectCandidate={noop}
+        onConfirmPartial={noop}
+        onRetry={noop}
+        onEdit={onEdit}
+      />
+    );
+    expect(screen.queryByRole("button", { name: "Skip" })).toBeNull();
+
+    const onToggleSkip = vi.fn();
+    render(
+      <ResultItem
+        item={makeItem({ id: 1, status: "resolved" })}
+        onSelectCandidate={noop}
+        onConfirmPartial={noop}
+        onRetry={noop}
+        onEdit={onEdit}
+        onToggleSkip={onToggleSkip}
+      />
+    );
+    expect(screen.getByRole("button", { name: "Skip" })).toBeInTheDocument();
+  });
+
+  it("marks a skipped row as Skipped and lets the user bring it back", async () => {
+    const onToggleSkip = vi.fn();
+    render(
+      <ResultItem
+        item={makeItem({ status: "resolved", skipped: true })}
+        onSelectCandidate={noop}
+        onConfirmPartial={noop}
+        onRetry={noop}
+        onEdit={onEdit}
+        onToggleSkip={onToggleSkip}
+      />
+    );
+    expect(screen.getByText("Skipped")).toBeInTheDocument();
+    await userEvent.click(screen.getByRole("button", { name: "Include again" }));
+    expect(onToggleSkip).toHaveBeenCalledTimes(1);
+  });
+
+  it("hides the edit and result actions while a row is skipped", () => {
+    render(
+      <ResultItem
+        item={makeItem({ status: "partial", skipped: true })}
+        onSelectCandidate={noop}
+        onConfirmPartial={noop}
+        onRetry={noop}
+        onEdit={onEdit}
+        onToggleSkip={noop}
+      />
+    );
+    expect(screen.queryByRole("button", { name: "Edit" })).toBeNull();
+    expect(screen.queryByRole("button", { name: "Confirm as is" })).toBeNull();
+  });
+});

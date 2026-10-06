@@ -1,0 +1,243 @@
+{
+  "coordinates": [
+    [
+      50.4501,
+      30.5234
+    ],
+    [
+      50.4433,
+      30.5139
+    ],
+    [
+      50.4581,
+      30.5163
+    ],
+    [
+      50.453,
+      30.516
+    ],
+    [
+      50.4274,
+      30.5382
+    ],
+    [
+      50.447,
+      30.5429
+    ]
+  ],
+  "response": {
+    "code": "Ok",
+    "distances": [
+      [
+        0,
+        2205.6,
+        3047.7,
+        2528.3,
+        3126.6,
+        3475.4
+      ],
+      [
+        2548.2,
+        0,
+        2766.1,
+        2246.7,
+        2683.9,
+        3219
+      ],
+      [
+        1615.5,
+        3414.7,
+        0,
+        751.1,
+        4742.1,
+        3321.7
+      ],
+      [
+        1096.1,
+        3301.7,
+        751.1,
+        0,
+        4222.7,
+        2802.3
+      ],
+      [
+        4435.5,
+        4389.2,
+        5094.5,
+        4575.1,
+        0,
+        2911.1
+      ],
+      [
+        1923.8,
+        4129.3,
+        3154.2,
+        2850.3,
+        2658,
+        0
+      ]
+    ],
+    "destinations": [
+      {
+        "hint": "pTvUkf___39GAAAAZgAAAAAAAADVAAAAPz-cQutSDUIAAAAAuClsQ0YAAABmAAAAAAAAANUAAAAvKAEAesHRAePNAQMIwNEBtM4BAwAA3w0AAAAA",
+        "location": [
+          30.52377,
+          50.449891
+        ],
+        "name": "вулиця Хрещатик",
+        "distance": 35.09715457
+      },
+      {
+        "hint": "nP1Agf___38QAAAAGgAAAFIAAABQAAAAYByPQSwoL0FEfrZCYG2GQhAAAAAaAAAAUgAAAFAAAAAvKAEA0JrRAeGzAQPsmtEBJLQBAwQAjwYAAAAA",
+        "location": [
+          30.513872,
+          50.443233
+        ],
+        "name": "бульвар Тараса Шевченка",
+        "distance": 7.713927008
+      },
+      {
+        "hint": "RSgQgJursY9mAAAABQAAAIwAAAA8AAAAV6kqQtZz4j_Mp2hCMB7GQWYAAAAFAAAAjAAAADwAAAAvKAEAUKfRAfjvAQNMpNEB9O0BAwYAnxMAAAAA",
+        "location": [
+          30.517072,
+          50.458616
+        ],
+        "name": "",
+        "distance": 79.3591904
+      },
+      {
+        "hint": "QCgQgGg2S4YOAAAAAAAAAA0AAABJAAAAqD2AQQAAAAACPmNBYn6fQg4AAAAAAAAADQAAAEkAAAAvKAEAEqTRAc3ZAQMgo9EBCNoBAwIATwEAAAAA",
+        "location": [
+          30.516242,
+          50.452941
+        ],
+        "name": "Володимирська вулиця",
+        "distance": 18.38982792
+      },
+      {
+        "hint": "n5QZhSaOXYgOAAAASAAAACQAAAAAAAAAen-BQYXfnkIR75BBAAAAAA4AAABIAAAAJAAAAAAAAAAvKAEA-_jRAbp2AQPY-dEBCHYBAwQAfw4AAAAA",
+        "location": [
+          30.537979,
+          50.427578
+        ],
+        "name": "вулиця Михайла Задніпровського",
+        "distance": 25.27221668
+      },
+      {
+        "hint": "abdRhIlw_ISSAAAAEwAAAEgAAACIAQAA7qJLQmiEyUAij8RBbaDbQkgAAAAKAAAAIwAAAMUAAAAvKAEARwvSAYLCAQM0DNIBmMIBAwgAvwoAAAAA",
+        "location": [
+          30.542663,
+          50.446978
+        ],
+        "name": "вулиця Андрія Парубія",
+        "distance": 17.01850308
+      }
+    ],
+    "durations": [
+      [
+        0,
+        221,
+        375.6,
+        306.2,
+        313.6,
+        348.4
+      ],
+      [
+        263.2,
+        0,
+        351.1,
+        281.7,
+        275.7,
+        318
+      ],
+      [
+        187.8,
+        402.3,
+        0,
+        97.9,
+        501.4,
+        354
+      ],
+      [
+        114.2,
+        335.2,
+        99.7,
+        0,
+        427.8,
+        280.4
+      ],
+      [
+        463.4,
+        444.8,
+        601,
+        531.6,
+        0,
+        337.2
+      ],
+      [
+        185.9,
+        406.9,
+        342.8,
+        300.2,
+        315.6,
+        0
+      ]
+    ],
+    "sources": [
+      {
+        "hint": "pTvUkf___39GAAAAZgAAAAAAAADVAAAAPz-cQutSDUIAAAAAuClsQ0YAAABmAAAAAAAAANUAAAAvKAEAesHRAePNAQMIwNEBtM4BAwAA3w0AAAAA",
+        "location": [
+          30.52377,
+          50.449891
+        ],
+        "name": "вулиця Хрещатик",
+        "distance": 35.09715457
+      },
+      {
+        "hint": "nP1Agf___38QAAAAGgAAAFIAAABQAAAAYByPQSwoL0FEfrZCYG2GQhAAAAAaAAAAUgAAAFAAAAAvKAEA0JrRAeGzAQPsmtEBJLQBAwQAjwYAAAAA",
+        "location": [
+          30.513872,
+          50.443233
+        ],
+        "name": "бульвар Тараса Шевченка",
+        "distance": 7.713927008
+      },
+      {
+        "hint": "RSgQgJursY9mAAAABQAAAIwAAAA8AAAAV6kqQtZz4j_Mp2hCMB7GQWYAAAAFAAAAjAAAADwAAAAvKAEAUKfRAfjvAQNMpNEB9O0BAwYAnxMAAAAA",
+        "location": [
+          30.517072,
+          50.458616
+        ],
+        "name": "",
+        "distance": 79.3591904
+      },
+      {
+        "hint": "QCgQgGg2S4YOAAAAAAAAAA0AAABJAAAAqD2AQQAAAAACPmNBYn6fQg4AAAAAAAAADQAAAEkAAAAvKAEAEqTRAc3ZAQMgo9EBCNoBAwIATwEAAAAA",
+        "location": [
+          30.516242,
+          50.452941
+        ],
+        "name": "Володимирська вулиця",
+        "distance": 18.38982792
+      },
+      {
+        "hint": "n5QZhSaOXYgOAAAASAAAACQAAAAAAAAAen-BQYXfnkIR75BBAAAAAA4AAABIAAAAJAAAAAAAAAAvKAEA-_jRAbp2AQPY-dEBCHYBAwQAfw4AAAAA",
+        "location": [
+          30.537979,
+          50.427578
+        ],
+        "name": "вулиця Михайла Задніпровського",
+        "distance": 25.27221668
+      },
+      {
+        "hint": "abdRhIlw_ISSAAAAEwAAAEgAAACIAQAA7qJLQmiEyUAij8RBbaDbQkgAAAAKAAAAIwAAAMUAAAAvKAEARwvSAYLCAQM0DNIBmMIBAwgAvwoAAAAA",
+        "location": [
+          30.542663,
+          50.446978
+        ],
+        "name": "вулиця Андрія Парубія",
+        "distance": 17.01850308
+      }
+    ]
+  }
+}

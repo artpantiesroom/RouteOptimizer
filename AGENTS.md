@@ -272,6 +272,10 @@ Do not tightly couple business logic to one specific routing provider.
 
 Public free instances of geocoders and routers (for example public Nominatim or public OSRM) have strict usage limits and are suitable for development and the prototype only. Plan for self-hosting or a paid provider if the product is validated. Keep this possibility open through the provider abstraction.
 
+### Routing provider constraints
+
+Slice 2 wires the **public OSRM demo server** behind the `Router` abstraction. It is for non-commercial, low-volume use, has no uptime guarantee, and must be credited — the UI shows `Map data © OpenStreetMap contributors. Routes by OSRM.` in the footer. Treat every request as rate-limited: the backend spaces requests (default 1/s via `OSRM_RATE_LIMIT_DELAY_SECONDS`), never retries HTTP 429 automatically, and surfaces `setup` (401/403), `retryable` (429/timeout/5xx/network) and `too many points` errors to the UI with the correct wording. Moving to a self-hosted OSRM or another provider must not require frontend changes.
+
 ### Honest travel time
 
 Without a live traffic source, estimated travel time is based on the road network and typical speeds, not on real traffic. The UI must not present it as a traffic-aware estimate.

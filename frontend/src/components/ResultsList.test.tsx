@@ -20,7 +20,11 @@ function makeItem(overrides: Partial<GeocodeResultItem>): GeocodeResultItem {
 const noop = () => {};
 const noopItem = () => {};
 
-function renderList(items: GeocodeResultItem[], onRetryFlaggedInCity = noop) {
+function renderList(
+  items: GeocodeResultItem[],
+  onRetryFlaggedInCity = noop,
+  onToggleSkip = noopItem
+) {
   render(
     <ResultsList
       items={items}
@@ -31,6 +35,7 @@ function renderList(items: GeocodeResultItem[], onRetryFlaggedInCity = noop) {
       onRetry={noopItem}
       onEdit={noopItem}
       onRetryFlaggedInCity={onRetryFlaggedInCity}
+      onToggleSkip={onToggleSkip}
     />
   );
 }
@@ -50,6 +55,23 @@ describe("ResultsList - recognized count", () => {
       makeItem({ id: 1, status: "ambiguous" }),
     ]);
     expect(screen.getByText(/recognized/)).toHaveTextContent("2 of 2 processed | 1 of 2 recognized");
+  });
+});
+
+describe("ResultsList - skip", () => {
+  it("shows the count of skipped rows in the summary", () => {
+    renderList([
+      makeItem({ id: 0, status: "resolved", skipped: true }),
+      makeItem({ id: 1, status: "resolved" }),
+    ]);
+    expect(screen.getByText(/skipped/)).toHaveTextContent("1 skipped");
+  });
+
+  it("calls onToggleSkip with the row id", async () => {
+    const onToggleSkip = vi.fn();
+    renderList([makeItem({ id: 3, status: "resolved" })], noop, onToggleSkip);
+    await userEvent.click(screen.getByRole("button", { name: "Skip" }));
+    expect(onToggleSkip).toHaveBeenCalledWith(3);
   });
 });
 

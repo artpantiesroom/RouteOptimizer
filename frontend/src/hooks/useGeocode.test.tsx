@@ -274,4 +274,50 @@ describe("useGeocode", () => {
     expect(result.current.state.items[0].error_kind).toBe("retryable");
     expect(result.current.state.items[0].retrying).toBe(false);
   });
+
+  it("skips a row and brings it back with toggleSkip", async () => {
+    mockedApi.parse.mockResolvedValue(parseResponse("A", "B"));
+    mockedApi.geocodeBatch.mockResolvedValue({
+      results: [
+        { index: 0, original: "A", status: "resolved", display_name: "A ok" },
+        { index: 1, original: "B", status: "resolved", display_name: "B ok" },
+      ],
+    });
+
+    const { result } = renderHook(() => useGeocode());
+    await act(async () => {
+      await result.current.run("A\nB");
+    });
+    await waitFor(() => expect(result.current.state.loading).toBe(false));
+
+    act(() => result.current.toggleSkip(0));
+    expect(result.current.state.items[0].skipped).toBe(true);
+    expect(result.current.state.items[1].skipped).toBe(false);
+
+    act(() => result.current.toggleSkip(0));
+    expect(result.current.state.items[0].skipped).toBe(false);
+  });
+
+  it("a fresh answer brings a skipped row back into play", async () => {
+    mockedApi.parse.mockResolvedValue(parseResponse("A"));
+    mockedApi.geocodeBatch.mockResolvedValue({
+      results: [{ index: 0, original: "A", status: "resolved", display_name: "A ok" }],
+    });
+
+    const { result } = renderHook(() => useGeocode());
+    await act(async () => {
+      await result.current.run("A");
+    });
+    await waitFor(() => expect(result.current.state.loading).toBe(false));
+
+    act(() => result.current.toggleSkip(0));
+    expect(result.current.state.items[0].skipped).toBe(true);
+
+    // Editing the row re-checks it, and the fresh answer returns it to the route.
+    await act(async () => {
+      await result.current.editItem(0, "вулиця Нова, 2");
+    });
+    expect(result.current.state.items[0].skipped).toBe(false);
+    expect(result.current.state.items[0].rechecking).toBe(false);
+  });
 });

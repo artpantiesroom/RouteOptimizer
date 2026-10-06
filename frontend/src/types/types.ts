@@ -73,6 +73,11 @@ export interface GeocodeResultItem {
   needs_check_reason?: string | null;
   /** City to re-run this row in, when one is known. */
   retry_city?: string | null;
+  /**
+   * The user chose to set this row aside: it stays visible but takes no part
+   * in the route. Nothing is dropped silently.
+   */
+  skipped?: boolean;
 }
 
 /** What a house unit refers to, as understood from the address text. */

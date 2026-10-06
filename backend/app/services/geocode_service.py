@@ -952,3 +952,85 @@ class GeocodeService:
             needs_check_reason=res.needs_check_reason,
             retry_city=res.retry_city,
         )
+
+
+def apply_whole_list_checks(
+    results: List[BatchGeocodeResponseItem],
+    city: Optional[str],
+    max_outlier_km: float = DEFAULT_OUTLIER_KM,
+) -> None:
+    """Re-run the list checks over results assembled from several batches.
+
+    geocode_batch() checks each 5-row chunk on its own, so a row that is only
+    wrong in the context of the whole list - one stop resolved in another
+    city, or far from every other stop - can slip through the small chunk it
+    happened to land in (distance outliers need at least three points to
+    compare against). This adds those flags back. It never removes a
+    needs_check flag or overwrites a reason: per-chunk checks keep their
+    wording.
+
+    The scope is the explicit city if one was given, otherwise the city the
+    resolved rows (mostly) agree on - the same dominance rule the API suggests
+    for the City field. The city the *input lines* name is not used here: one
+    line saying another city must not re-scope a list.
+    """
+    suggestion = infer_dominant_city(results) if not city else None
+    scope = city or (suggestion.city if suggestion else None)
+    dominant = suggestion.city if suggestion else scope
+
+    for row in results:
+        if row.status != "resolved":
+            continue
+        if scope and row.found_city and not _same_city(row.found_city, scope):
+            row.needs_check = True
+            row.needs_check_reason = row.needs_check_reason or (
+                f"Found in {row.found_city}, outside {scope}."
+            )
+            if dominant and row.retry_city is None:
+                row.retry_city = dominant
+
+    for key, distance in flag_distance_outliers(results, max_km=max_outlier_km).items():
+        row = next((r for r in results if r.original.strip().lower() == key), None)
+        if row is not None:
+            row.needs_check = True
+            row.needs_check_reason = row.needs_check_reason or describe_outlier(
+                distance, max_outlier_km
+            )
+
+
+async def geocode_in_batches(
+    service: GeocodeService,
+    items: List[BatchGeocodeRequestItem],
+    city: Optional[str] = None,
+    batch_size: int = 5,
+    on_batch=None,
+) -> List[BatchGeocodeResponseItem]:
+    """Geocode a list of items in provider-sized batches.
+
+    The geocoder accepts at most 5 items per call, so callers that work with
+    longer lists all share this chunking instead of reimplementing it.
+    geocode_batch() deduplicates identical lines only within a single chunk,
+    so duplicates pass through here untouched, and results keep the caller's
+    order and indexes. on_batch, when given, is called after each completed
+    chunk with (start_index, chunk_items, batch_results) - it sees the
+    service's per-batch state (trace, city suggestion) for that chunk.
+
+    Per-chunk checks see only their chunk, so the whole list is checked again
+    once every chunk has run; a far-away or wrong-city stop is flagged even
+    when its own chunk was too small or too uniform to notice.
+    """
+    if batch_size < 1:
+        raise ValueError("batch_size must be at least 1")
+    results: List[BatchGeocodeResponseItem] = []
+    for start in range(0, len(items), batch_size):
+        chunk = items[start : start + batch_size]
+        batch = await service.geocode_batch(chunk, city=city)
+        results.extend(batch)
+        if on_batch is not None:
+            on_batch(start, chunk, batch)
+    apply_whole_list_checks(
+        results,
+        city,
+        max_outlier_km=getattr(service, "_max_outlier_km", DEFAULT_OUTLIER_KM),
+    )
+    return results

@@ -43,6 +43,7 @@ from app.services.geocode_service import (  # noqa: E402
     DEFAULT_OUTLIER_KM,
     BatchGeocodeRequestItem,
     GeocodeService,
+    geocode_in_batches,
 )
 
 BATCH_SIZE = 5  # same limit the API enforces
@@ -274,19 +275,19 @@ async def run(
     rows: List[dict] = []
     suggestions: List[Any] = []
 
-    for start in range(0, len(addresses), BATCH_SIZE):
-        chunk = addresses[start : start + BATCH_SIZE]
-        items = [
-            BatchGeocodeRequestItem(index=i, original=text, trimmed=text)
-            for i, text in enumerate(chunk)
-        ]
-        results = await service.geocode_batch(items, city=city)
+    items = [
+        BatchGeocodeRequestItem(index=i, original=text, trimmed=text)
+        for i, text in enumerate(addresses)
+    ]
+
+    def on_batch(start: int, chunk: List[Any], batch: List[Any]) -> None:
         if service.city_suggestion is not None:
             suggestions.append(service.city_suggestion)
         steps = service.trace_as_dicts()
         if trace:
             print_trace(steps)
-        for text, result in zip(chunk, results):
+        for item, result in zip(chunk, batch):
+            text = item.original
             row = {"address": text}
             row.update(summarize(result))
             if street_level:
@@ -294,6 +295,8 @@ async def run(
             rows.append(row)
             print_row(row, street_level)
         print(f"  ({min(start + BATCH_SIZE, len(addresses))}/{len(addresses)} done)")
+
+    await geocode_in_batches(service, items, city=city, on_batch=on_batch)
 
     return rows, suggestions
 

@@ -1,14 +1,13 @@
 # RouteOptimizer
 
-RouteOptimizer is a route planner (not a navigator). This is vertical slice 1: paste address list → geocode → show results with clear errors for unresolved addresses. Address recognition, city scoping, result editing and the precision of `resolved` are covered below; see *Address normalization*, *Fallback chain*, *House number equality* and *List-level checks*.
+RouteOptimizer is a route planner (not a navigator). Slice 1: paste address list → geocode → show results with clear errors for unresolved addresses. Slice 2: a start point plus the recognized addresses produce a driving **distance/duration matrix** from a routing provider. Address recognition, city scoping, result editing and the precision of `resolved` are covered below; see *Address normalization*, *Fallback chain*, *House number equality*, *List-level checks* and *Route planning*.
 
 ## Planned
 
 Not implemented yet:
 
+* **Route optimization** (ordering the stops).
 * **PWA support** (service worker, web app manifest, offline shell). The frontend is currently a plain Vite/React SPA.
-* Routing provider and distance/duration matrix.
-* Route optimization.
 * Map view.
 * Navigator hand-off.
 * Client-side session persistence.
@@ -77,6 +76,19 @@ A row with `needs_check` is **not** counted as recognized in the UI, even when i
 
 Two house-level candidates on the *same street with the same house number* are collapsed into one, keeping the more important row. Nominatim returns an address and any place sitting at that address as separate rows (`8, Покровська вулиця` next to `Ліцей №100 «Поділ», 8, Покровська вулиця`); that is one location, not a choice. Different house numbers on one street stay `ambiguous`.
 
+## Route planning
+
+A **Router** abstraction (`backend/app/providers/routing/base.py`) turns an ordered list of coordinates into a driving distance/duration matrix. Slice 2 ships one provider, **OSRM**, calling `GET {base}/table/v1/driving/{lon},{lat};{lon},{lat}...?annotations=duration,distance`. The first matrix point is the **start point**; the rest are the stops in list order. The provider validates every response before it reaches the service layer (square numeric matrices, non-negative cells, zero diagonal, `code == "Ok"`) and maps failures to typed errors: `setup` (HTTP 401/403, non-retryable), `retryable` (timeout, HTTP 429, 5xx, network — never auto-retried), and `too many points` (OSRM `TooBig`).
+
+The **matrix service** (`backend/app/services/matrix_service.py`) validates the request (2..`MATRIX_MAX_POINTS` points, coordinate ranges, duplicate ids) and reports two problem kinds instead of failing the whole request when only part of the matrix is unusable:
+
+- **unreachable** — a point has no road route to/from the rest (an entire matrix row or column is `null`);
+- **far_from_road** — a point is more than `max_snap_distance_m` (default 500 m) from the road network, so its times are approximate.
+
+The provider instance carries the **rate limiter** (a shared async lock held across the delay and the request; `OSRM_RATE_LIMIT_DELAY_SECONDS`, default 1 s) and the **response cache** (keyed by coordinates rounded to 6 decimal places; successes only — errors are never cached). HTTP 429/401/403/5xx log the status code and the first 500 characters of the body at WARNING; coordinates are never logged.
+
+The public OSRM demo server is for non-commercial, low-volume use, offers no uptime guarantee and must be credited (`Map data © OpenStreetMap contributors. Routes by OSRM.` in the frontend footer). For production, self-host OSRM (or use a paid provider) and point `OSRM_BASE_URL` at it — the abstraction keeps the rest of the app unchanged. Durations are road-network estimates without live traffic, and the UI says so.
+
 ## Heuristic classification (geocoding results)
 
 The Nominatim provider is configured with `addressdetails=1` and requests up to 5 candidates. Classification uses `house_number` and result `type` (not text guessing). House numbers like `12А`, `12/2`, `12 корп. 3` are accepted when present in `address.house_number`.
@@ -101,10 +113,11 @@ On HTTP 401/403/5xx the backend logs the status code and the first 500 character
 - `POST /api/parse` — split text into lines, trim, ignore blanks, detect duplicates (case-insensitive). Returns items in input order with `is_duplicate` flag, plus a `suggested_city` used to pre-fill the City field. Input limits: max 100 lines, max line length 500. Instant, no network.
 - `POST /api/geocode` — geocode a small batch of addresses (max 5). Optional `city` scopes matches to that city. Results returned in input order, each carrying `searched_as`, `house`, `unit`, `unit_kind`, `unit_inferred`, `dropped_candidates`, `scope_message`, `found_house`, `found_city`, `needs_check`, `needs_check_reason` and `retry_city` so the UI can explain what happened. When `city` was blank, the response may also carry a top-level `city_suggestion` and `city_suggestion_share`. Cache: `resolved`, `partial`, `ambiguous`, `not_found` are cached (by normalized query + requested city). `error` is never cached. Rate limit: 1 req/s delay applied **only before real network calls** (cache hits do not wait). The limiter uses a **shared async lock** held across the delay and the request. If provider returns HTTP 429, we return `error` (no auto-retry).
 - `GET /api/health` — health check.
+- `POST /api/matrix` — compute the driving distance/duration matrix. Body is a bare JSON array of `{id, lat, lon}`; the first point is the start. Returns `ids` (echoed in matrix order), `durations_s` and `distances_m` (rounded to whole seconds/metres, `null` where no route exists), `problems` (`unreachable`, `far_from_road`), `provider`, `profile` and a user-facing `note`. Errors: `400` for validation or too many points, `502` with `{"message", "error_kind"}` (`retryable`/`setup`) for provider failures. Frontend wording: retryable → "Could not calculate the route right now. Try again."; setup → "The route service rejected the request. This is a setup problem, not your addresses."
 
 ## Environment variables
 
-See `backend/.env.example`. `NOMINATIM_USER_AGENT` **must** be configured (no usable generic default). The app fails fast at startup if missing.
+See `backend/.env.example`. `NOMINATIM_USER_AGENT` **must** be configured (no usable generic default). The app fails fast at startup if missing. Routing is configured by `OSRM_BASE_URL` (default: the public demo `https://router.project-osrm.org`), `OSRM_TIMEOUT_SECONDS`, `OSRM_RATE_LIMIT_DELAY_SECONDS` and `MATRIX_MAX_POINTS` (default 50).
 
 ## Running backend
 
@@ -172,6 +185,24 @@ it. A row served from the batch cache shows as `cache` rather than as a request.
 
 Sample input files belong in `backend/scripts/samples/`, which is gitignored:
 real addresses never enter the repository.
+
+A stored fixture (`backend/tests/fixtures/osrm_matrix_sample.json`) holds one real
+OSRM response for six Kyiv landmarks, so the matrix property tests check real
+numbers (road distance is never shorter than the straight line within the snap
+tolerance, asymmetric matrices are accepted, the diagonal is zero) without
+hitting the network.
+
+## Demoing the matrix
+
+`backend/scripts/matrix_demo.py` geocodes a text file of addresses with the same
+pipeline as the API (first line = start point), requests the matrix, and prints
+drive times (minutes) and distances (km) plus any problems. It hits the real
+geocoder and the real routing service, so keep the file small and personal.
+
+```bash
+cd backend
+.venv/bin/python scripts/matrix_demo.py scripts/samples/matrix_demo_kyiv.txt --city Київ
+```
 
 ## Tests
 

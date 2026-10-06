@@ -54,6 +54,9 @@ function mergeResult(item: GeocodeResultItem, r: GeocodeBatchResponseItem): Geoc
     needs_check: r.needs_check ?? false,
     needs_check_reason: r.needs_check_reason ?? null,
     retry_city: r.retry_city ?? null,
+    // A fresh answer puts the row back in play; a skipped row is only skipped
+    // until the user re-includes it, edits it, or it is checked again.
+    skipped: false,
     selectedCandidateIndex: undefined,
     confirmed: undefined,
     offline: false,
@@ -84,6 +87,7 @@ export function useGeocode() {
       is_duplicate: p.is_duplicate,
       duplicate_of: p.duplicate_of ?? null,
       status: "not_found",
+      skipped: false,
     } as GeocodeResultItem;
   }
 
@@ -351,6 +355,18 @@ export function useGeocode() {
   }
 
   /**
+   * Set a row aside for this route (or bring it back). The row stays visible
+   * and readable but takes no part in the calculation until it is included
+   * again, fixed, or confirmed - nothing is dropped silently.
+   */
+  function toggleSkip(itemId: number) {
+    setState((prev) => ({
+      ...prev,
+      items: prev.items.map((i) => (i.id === itemId ? { ...i, skipped: !i.skipped } : i)),
+    }));
+  }
+
+  /**
    * Re-run only the rows that need a check, in the city they should be in.
    * Other rows keep their answers: they were not implicated.
    */
@@ -420,5 +436,6 @@ export function useGeocode() {
     editItem,
     setCity,
     retryFlaggedInCity,
+    toggleSkip,
   };
 }

@@ -73,6 +73,61 @@ export interface GeocodeBatchResponse {
   city_suggestion_share?: number | null;
 }
 
+/** One row of the distance matrix; the first point is the start point. */
+export interface MatrixPoint {
+  id: string;
+  lat: number;
+  lon: number;
+}
+
+export interface MatrixProblem {
+  id: string;
+  kind: string;
+  message: string;
+}
+
+export interface MatrixResponse {
+  /** Point ids in matrix order; the start point is first. */
+  ids: string[];
+  /** Rounded to whole seconds / metres; null means no route between that pair. */
+  durations_s: (number | null)[][];
+  distances_m: (number | null)[][];
+  problems: MatrixProblem[];
+  provider: string;
+  profile: string;
+  note: string;
+}
+
+/** An API error with enough structure to pick the user-facing wording. */
+export class ApiError extends Error {
+  status: number;
+  errorKind: "retryable" | "setup" | null;
+
+  constructor(message: string, status: number, errorKind: "retryable" | "setup" | null = null) {
+    super(message);
+    this.name = "ApiError";
+    this.status = status;
+    this.errorKind = errorKind;
+  }
+}
+
+function apiErrorFrom(res: Response, text: string): ApiError {
+  let message = text;
+  let errorKind: "retryable" | "setup" | null = null;
+  try {
+    const data = JSON.parse(text);
+    if (typeof data.detail === "string") {
+      message = data.detail;
+    } else if (data.detail && typeof data.detail.message === "string") {
+      message = data.detail.message;
+      errorKind = data.detail.error_kind ?? null;
+    }
+  } catch {
+    // keep the raw text
+  }
+  return new ApiError(message, res.status, errorKind);
+}
+
 export async function parse(text: string): Promise<ParseResponse> {
   const res = await fetch(`${API_BASE}/parse`, {
     method: "POST",
@@ -80,7 +135,7 @@ export async function parse(text: string): Promise<ParseResponse> {
     body: JSON.stringify({ text }),
   });
   if (!res.ok) {
-    throw new Error(await res.text());
+    throw apiErrorFrom(res, await res.text());
   }
   return res.json();
 }
@@ -100,7 +155,23 @@ export async function geocodeBatch(
     signal,
   });
   if (!res.ok) {
-    throw new Error(await res.text());
+    throw apiErrorFrom(res, await res.text());
+  }
+  return res.json();
+}
+
+export async function matrix(
+  points: MatrixPoint[],
+  signal?: AbortSignal
+): Promise<MatrixResponse> {
+  const res = await fetch(`${API_BASE}/matrix`, {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify(points),
+    signal,
+  });
+  if (!res.ok) {
+    throw apiErrorFrom(res, await res.text());
   }
   return res.json();
 }

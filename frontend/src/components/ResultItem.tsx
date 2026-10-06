@@ -19,6 +19,7 @@ interface Props {
   // Optional so a row can be rendered in isolation (tests, storybook) without
   // the whole retry flow. The button is hidden when it is missing.
   onRetryInCity?: (city: string) => void;
+  onToggleSkip?: () => void;
 }
 
 /** "Apartment 9", or a hedged reading when the unit was guessed from "15-9". */
@@ -40,6 +41,7 @@ export function ResultItem({
   onRetry,
   onEdit,
   onRetryInCity,
+  onToggleSkip,
 }: Props) {
   const [editing, setEditing] = useState(false);
   const [draft, setDraft] = useState(item.trimmed);
@@ -60,6 +62,7 @@ export function ResultItem({
 
   const interpretation = unitLine(item);
   const busy = item.retrying || item.rechecking;
+  const skipped = item.skipped === true;
 
   function submitEdit() {
     const next = draft.trim();
@@ -79,6 +82,7 @@ export function ResultItem({
         padding: "8px",
         marginBottom: "8px",
         borderRadius: "4px",
+        ...(skipped ? { backgroundColor: "#f2f2f2", color: "#777" } : {}),
       }}
     >
       <div>
@@ -113,15 +117,32 @@ export function ResultItem({
         ) : (
           <span>
             <strong>{item.original}</strong>
-            {item.is_duplicate && <span style={{ color: "#666" }}> (duplicate)</span>}
-            {!item.is_blank && (
-              <button
-                onClick={() => setEditing(true)}
-                disabled={busy}
-                style={{ marginLeft: "8px" }}
-              >
-                Edit
+            {item.is_duplicate && <span style={{ color: skipped ? "#999" : "#666" }}> (duplicate)</span>}
+            {!skipped && !item.is_blank && (
+              <>
+                <button
+                  onClick={() => setEditing(true)}
+                  disabled={busy}
+                  style={{ marginLeft: "8px" }}
+                >
+                  Edit
+                </button>
+                {onToggleSkip && (
+                  <button onClick={onToggleSkip} style={{ marginLeft: "8px" }}>
+                    Skip
+                  </button>
+                )}
+              </>
+            )}
+            {skipped && onToggleSkip && (
+              <button onClick={onToggleSkip} style={{ marginLeft: "8px" }}>
+                Include again
               </button>
+            )}
+            {skipped && (
+              <span style={{ marginLeft: "8px", color: "#999", fontWeight: 600 }}>
+                Skipped
+              </span>
             )}
             {busy && (
               <span style={{ marginLeft: "8px", color: "#666" }}>
@@ -145,7 +166,7 @@ export function ResultItem({
       {item.status === "partial" && (
         <div style={{ color: "#b8860b" }}>
           {item.message || APPROXIMATE_COPY}
-          {!item.confirmed && (
+          {!skipped && !item.confirmed && (
             <button onClick={onConfirmPartial} style={{ marginLeft: "8px" }}>
               Confirm as is
             </button>
@@ -160,30 +181,34 @@ export function ResultItem({
           {item.candidates.length === 1 ? (
             <>
               <div>{item.message || "One match found - accept it or check the address:"}</div>
-              <ul style={{ margin: "4px 0" }}>
-                {item.candidates.map((c, i) => (
-                  <li key={i}>
-                    <button onClick={() => onSelectCandidate(i)} style={{ marginRight: "8px" }}>
-                      Use this match
-                    </button>
-                    {c.display_name}
-                  </li>
-                ))}
-              </ul>
+              {!skipped && (
+                <ul style={{ margin: "4px 0" }}>
+                  {item.candidates.map((c, i) => (
+                    <li key={i}>
+                      <button onClick={() => onSelectCandidate(i)} style={{ marginRight: "8px" }}>
+                        Use this match
+                      </button>
+                      {c.display_name}
+                    </li>
+                  ))}
+                </ul>
+              )}
             </>
           ) : (
             <>
               <div>More than one match - pick one:</div>
-              <ul style={{ margin: "4px 0" }}>
-                {item.candidates.map((c, i) => (
-                  <li key={i}>
-                    <button onClick={() => onSelectCandidate(i)} style={{ marginRight: "8px" }}>
-                      Choose
-                    </button>
-                    {c.display_name}
-                  </li>
-                ))}
-              </ul>
+              {!skipped && (
+                <ul style={{ margin: "4px 0" }}>
+                  {item.candidates.map((c, i) => (
+                    <li key={i}>
+                      <button onClick={() => onSelectCandidate(i)} style={{ marginRight: "8px" }}>
+                        Choose
+                      </button>
+                      {c.display_name}
+                    </li>
+                  ))}
+                </ul>
+              )}
             </>
           )}
         </div>
@@ -196,7 +221,7 @@ export function ResultItem({
       {item.status === "error" && (
         <div style={{ color: "red" }}>
           {errorMessage}
-          {isRetryable && (
+          {!skipped && isRetryable && (
             <button onClick={onRetry} disabled={busy} style={{ marginLeft: "8px" }}>
               {item.retrying ? "Retrying..." : "Retry"}
             </button>
@@ -207,7 +232,7 @@ export function ResultItem({
       {item.needs_check && (
         <div style={{ color: "#b8860b" }}>
           Needs a check{item.needs_check_reason ? `: ${item.needs_check_reason}` : "."}
-          {item.retry_city && !busy && onRetryInCity && (
+          {!skipped && item.retry_city && !busy && onRetryInCity && (
             <button
               onClick={() => onRetryInCity(item.retry_city as string)}
               style={{ marginLeft: "8px" }}

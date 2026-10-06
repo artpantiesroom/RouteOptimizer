@@ -10,6 +10,7 @@ interface Props {
   onRetry: (itemId: number) => void;
   onEdit: (itemId: number, newText: string) => void;
   onRetryFlaggedInCity: (city: string) => void;
+  onToggleSkip: (itemId: number) => void;
 }
 
 export function ResultsList({
@@ -21,6 +22,7 @@ export function ResultsList({
   onRetry,
   onEdit,
   onRetryFlaggedInCity,
+  onToggleSkip,
 }: Props) {
   const nonBlank = items.filter((i) => !i.is_blank).length;
   const recognized = items.filter((i) => {
@@ -34,6 +36,7 @@ export function ResultsList({
   }).length;
 
   const needsCheck = items.filter((i) => i.needs_check).length;
+  const skipped = items.filter((i) => i.skipped).length;
   // One city to offer: the city the flagged rows should have been in.
   const retryCities = [
     ...new Set(items.filter((i) => i.needs_check && i.retry_city).map((i) => i.retry_city)),
@@ -47,6 +50,7 @@ export function ResultsList({
       <div>
         {processed} of {nonBlank} processed | {recognized} of {displayTotal} recognized
         {needsCheck > 0 ? ` | ${needsCheck} need a check` : ""}
+        {skipped > 0 ? ` | ${skipped} skipped` : ""}
       </div>
       {needsCheck > 0 && offerCity && (
         <div style={{ color: "#b8860b" }}>
@@ -65,6 +69,7 @@ export function ResultsList({
           onRetry={() => onRetry(item.id)}
           onEdit={(newText) => onEdit(item.id, newText)}
           onRetryInCity={(city) => onRetryFlaggedInCity(city)}
+          onToggleSkip={() => onToggleSkip(item.id)}
         />
       ))}
     </div>

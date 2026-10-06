@@ -1,7 +1,7 @@
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 
-from .api import geocode, health, parse
+from .api import geocode, health, matrix, parse
 from .core.config import get_settings
 
 settings = get_settings()
@@ -19,3 +19,4 @@ app.add_middleware(
 app.include_router(health.router, prefix="/api")
 app.include_router(parse.router, prefix="/api")
 app.include_router(geocode.router, prefix="/api")
+app.include_router(matrix.router, prefix="/api")

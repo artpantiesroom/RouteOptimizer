@@ -5,7 +5,11 @@ from pydantic import BaseModel, Field
 
 from ..core.config import Settings, get_settings
 from ..providers.geocoding.nominatim import NominatimGeocoder
-from ..services.geocode_service import BatchGeocodeRequestItem, GeocodeService
+from ..services.geocode_service import (
+    BatchGeocodeRequestItem,
+    GeocodeService,
+    geocode_in_batches,
+)
 
 router = APIRouter()
 
@@ -99,7 +103,7 @@ async def geocode_batch(
             for i in req.items
         ]
         service.reset()
-        results = await service.geocode_batch(items, city=city)
+        results = await geocode_in_batches(service, items, city=city)
         suggestion = service.city_suggestion
         return GeocodeBatchResponse(
             city_suggestion=suggestion.city if suggestion else None,
