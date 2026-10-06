@@ -697,3 +697,13 @@ Suggested order of vertical slices:
 7. Client-side session persistence.
 
 Only after that should the project expand.
+
+Last small task before slice 2. Real data: street-only queries return several same-name segments in different districts (e.g. "Дмитрівська вулиця" -> Darnytskyi + two Shevchenkivskyi segments; "вулиця Симона Петлюри" -> three segments).
+
+1. Street-only fallback: compute the spread of the candidate points. If all within 1.5 km (configurable), "partial" with one representative point and the wording "Street found, house not found. The pin is approximate." If farther apart, do NOT pick one: return "ambiguous" with one candidate per segment (district shown), labelled "Several streets with this name, choose the right one". Such a stop never counts as recognized before the user chooses. Tests with fixtures for both cases. Say which point is used as the representative (centroid, nearest to the dominant cluster of the list, or first) and why.
+
+2. measure_quality.py: add --record FILE / --replay FILE. Record raw provider responses (HTTP status, body) per request to FILE; replay serves them without network so before/after comparisons are deterministic. The recording lives in backend/scripts/samples/ (gitignored). Add one test for replay.
+
+3. Add the "Address precision rules" section to AGENTS.md (I will paste the text), and make README refer to it instead of duplicating.
+
+4. Report exact pytest / vitest / tsc summary lines and rerun both sample files.
